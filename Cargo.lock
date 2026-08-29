@@ -321,6 +321,7 @@ dependencies = [
  "deploy-core",
  "globset",
  "hex",
+ "rusqlite",
  "serde",
  "serde_json",
  "sha2",
