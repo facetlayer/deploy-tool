@@ -1,0 +1,40 @@
+[Unit]
+Description=deploy-server (Rust, JSON-RPC upload receiver, port 4715)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root
+
+# Where the SQLite database lives. Left implicit on do2/dohl: running as root
+# with neither DEPLOY_STATE_DIR nor XDG_STATE_HOME set resolves to
+# /root/.local/state/deploy/db.sqlite, which is the database the old server
+# already wrote and this one opens in place. Set DEPLOY_STATE_DIR here only if
+# you mean to point the instance somewhere else.
+
+# DEPLOY_AUTH_URL, DEPLOY_AUTH_KEY, DEPLOY_ADMIN_RESOURCE and
+# DEPLOY_DISABLE_LEGACY_KEYS. Secrets stay OUT of this version-controlled file:
+# the env file is root-owned, 0600, created by hand over SSH, and never in git
+# or in a deploy bundle. See install/deploy.env.template.
+EnvironmentFile=/root/secrets/deploy.env
+
+# --port is required; there is no default. 4715 is what the old server used on
+# do2 and dohl, and what nginx's catch-all location on apf1.dev proxies to.
+#
+# NOTE: the binary binds 0.0.0.0, inherited from the old server, so this port is
+# reachable directly and not only through nginx. The droplet has no general
+# firewall. There is no bind flag yet.
+ExecStart=/root/bin/deploy-server serve --port 4715
+
+Restart=always
+RestartSec=2
+
+# The deploy root is /root/deploys, so ProtectHome= would make the server's own
+# working set inaccessible and the unit would die with 203/EXEC. Deliberately
+# absent, not forgotten.
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
