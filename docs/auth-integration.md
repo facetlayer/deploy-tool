@@ -96,13 +96,17 @@ derivation from the hostname — an instance that forgets to set this refuses
 
 | Variable | Meaning |
 |---|---|
-| `DEPLOY_AUTH_URL` | auth-center base URL, e.g. `https://auth.apf1.dev`. Never hardcoded. Unset ⇒ legacy-only, no network calls. |
+| `DEPLOY_AUTH_URL` | auth-center base URL, e.g. `https://auth.apf1.dev`. **Required** — there is no legacy fallback, so an instance without it cannot authenticate anyone. Never hardcoded. |
 | `DEPLOY_AUTH_KEY` | This instance's own auth-center service key, holding `auth:introspect`. Each instance gets its own so they revoke independently. |
-| `DEPLOY_ADMIN_RESOURCE` | Per D2. Required when `DEPLOY_AUTH_URL` is set. |
-| `DEPLOY_DISABLE_LEGACY_KEYS` | Set to `1` to turn off the local `secret_key` table on an instance whose keys have all migrated (R6). |
+| `DEPLOY_ADMIN_RESOURCE` | Per D2. Required. |
 
 All live in the instance's `EnvironmentFile` (`/root/secrets/deploy.env`),
-`0600` root-owned — not in the unit file.
+`0600` root-owned — not in the unit file. The server refuses to start if any of
+the three is missing, rather than starting in a half-configured state.
+
+`--disable-api-key-check` still exists for local development and for the test
+suite. It is not a migration path and must never be set on do2 or dohl; the
+server logs a prominent warning at startup when it is on.
 
 ## Authorization flow (R2)
 
@@ -135,12 +139,30 @@ Positive verdicts only, keyed by `sha256(key) | resource | action`, 30s TTL,
 capped entry count. Negative verdicts are never cached, so revocation takes
 effect within the positive-cache window at worst.
 
-## Legacy keys (R6)
+## No legacy keys (R6)
 
-The local `secret_key` table is checked first, so it costs no network call, and
-grants everything. It is disabled per instance with
-`DEPLOY_DISABLE_LEGACY_KEYS=1`. `deploy-server list-legacy-keys` reports what
-remains (id, created-at, last-seen) so a migration can actually be finished.
+The old server authenticated against a local `secret_key` table: a flat list of
+key strings with no owner, scope, expiry or audit trail, where every key could
+do everything on the instance. **That table does not exist in this
+implementation.** It is removed, not deprecated — there is no fallback path, no
+per-instance flag to disable it, and therefore no bypass left behind. Every
+caller authenticates against auth-center.
+
+This is the single largest security win available in the rewrite, and it is
+only available because backwards compatibility was dropped. An instance is no
+longer only as strong as its weakest forgotten legacy key.
+
+The consequence is that enabling this on an instance is a **cutover, not a
+gradual migration**. See "Rollout" below.
+
+Because compatibility is not a requirement, the schema is modelled properly
+rather than bolted onto the old one. The resource binding lives in its own
+table with its own history, rather than as a column on `project`:
+
+- `project_resource_binding` — the current binding for each project.
+- `project_resource_binding_history` — every bind and rebind, with the key that
+  made the change. R1 requires this: rebinding a project to a resource the
+  caller controls is a privilege-escalation path, so it is audited.
 
 ## Attribution (R7)
 
@@ -169,14 +191,46 @@ it is not a stub in the authorization path, only in the typo check.
 
 ## Rollout
 
-Per the requirements doc, unchanged:
+There is no legacy fallback, so enabling this on an instance is a cutover.
+Per instance:
 
-1. Land the resource model with `DEPLOY_AUTH_URL` unset everywhere. No
-   behavior change.
-2. Register resources and issue keys in auth-center.
-3. Enable on do2 with the legacy table still active; confirm real deploys work.
-4. Enable on dohl only after do2 has run clean for a while.
-5. Disable the legacy table per instance once its keys are migrated.
+1. Land the resource model and the resolution path.
+2. Create the resources and issue keys in auth-center, including the instance's
+   own `auth:introspect` service key.
+3. Register every existing project on the instance against its resource, and
+   distribute the new keys to every caller that needs one — CI secrets,
+   `~/secrets/deploy.env`, and so on. Do this **before** the cutover; a caller
+   holding no valid key at cutover simply stops being able to deploy.
+4. Cut over: rebuild or migrate the database, set the three environment
+   variables, restart.
+5. Verify with a real deploy of a low-stakes project before relying on it.
 
-Do not enable `DEPLOY_AUTH_URL` on any instance still running the old server —
-the interim code's `allowed ?? true` makes that strictly worse than legacy-only.
+do2 first, and let it run clean for a while before cutting dohl over.
+Production is under no deadline.
+
+### Rebuilding the database discards live state
+
+The deploy database holds operational state as well as key material:
+`active_deployment` records which deployment is currently serving each project,
+and the `deployment` rows describe what is on disk. Rebuilding discards that.
+Before rebuilding an instance, either redeploy every project on it so the state
+regenerates, or do a one-off import of `project`, `deployment` and
+`active_deployment` from the old database. The key material is the part being
+thrown away deliberately; the deployment bookkeeping is not.
+
+### The circular dependency, which is real
+
+Fail-closed (R4) is correct, but it means auth-center downtime is deploy
+downtime for every instance pointed at it — and **auth-center is itself
+deployed by this tool**. That is a genuine deadlock, not a hypothetical: if
+auth-center is down and the fix is to deploy auth-center, there is no way in.
+
+Two things must be ready before any cutover, since there is no fallback to
+catch a mistake:
+
+- A tested way back in. Decide deliberately whether auth-center's own deploys
+  stay on a separate path so the two cannot deadlock. `--disable-api-key-check`
+  behind an SSH-only restart is one answer, but it has to be a decision that
+  was made and tested, not one discovered during an outage.
+- Confirmation that every caller has a working key. Step 3's distribution is
+  the step most likely to be left incompletely done.

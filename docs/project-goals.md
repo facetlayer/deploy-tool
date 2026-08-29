@@ -73,11 +73,16 @@ spec for this part. In summary:
   should not be able to run arbitrary SQL.
 - **Fail closed.** Network error, timeout, non-2xx or a malformed
   introspection response all deny.
-- **Cache positive results briefly**, keyed by key hash + resource + action,
-  so one deploy does not make one introspection call per uploaded file. Never
+- **Cache positive results briefly**, keyed by key hash + resource + action, so
+  one deploy does not make one introspection call per uploaded file. Never
   cache negative results.
-- **Record who authorized each deployment**, so `list-deployments` can answer
-  "who shipped this".
+- **No local key table.** The old server's `secret_key` table — a flat list of
+  strings with no owner, scope, expiry or audit trail, where every key could do
+  everything — is removed outright, not deprecated. There is no fallback path
+  and no flag to re-enable it, so no bypass is left behind on an instance that
+  has cut over. This is the largest security win in the rewrite.
+- **Record who authorized each deployment**, so `history` can answer "who
+  shipped this".
 
 ### The staging/production problem this solves
 
@@ -127,15 +132,24 @@ binding.
 ## Goal 5 — replace the old tool
 
 The end state is the old service and CLI retired, and this one installed on
-**do2** and **dohl** (see `~/biz/do2` and `~/biz/dohl`). Rollout follows the
-staged plan in the requirements doc: land the resource model with auth
-disabled, register resources and issue keys, enable on do2 first with the
-legacy key table still active as a fallback, then dohl, then disable the
-legacy table per instance once its keys are migrated.
+**do2** and **dohl** (see `~/biz/do2` and `~/biz/dohl`).
 
-The legacy `secret_key` table therefore stays supported during migration, but
-must be disableable per instance, and the CLI needs a way to list what legacy
-keys remain so the migration can actually be finished.
+Because there is no legacy key path, enabling an instance is a **cutover, not a
+gradual migration**: register every project against its resource and distribute
+the new keys *first*, then rebuild or import the database, set the environment
+variables and restart. do2 first; dohl only after do2 has run clean for a
+while.
+
+Backwards compatibility with the old schema is explicitly not a requirement, so
+the database may be rebuilt. Two things that costs, both of which have to be
+planned for rather than discovered:
+
+- Rebuilding discards `active_deployment` and the `deployment` rows — the
+  record of what is actually running. Either redeploy everything on the
+  instance afterwards, or import those three tables from the old database.
+- Fail-closed means auth-center downtime is deploy downtime, and auth-center is
+  itself deployed by this tool. That circular dependency needs a tested way in
+  before the first cutover, not during the first outage.
 
 ## Current constraint
 
