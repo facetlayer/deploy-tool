@@ -1,0 +1,25 @@
+[package]
+name = "deploy-server"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "deploy-server"
+path = "src/main.rs"
+
+[dependencies]
+deploy-core = { path = "../deploy-core" }
+anyhow.workspace = true
+axum = "0.7"
+base64.workspace = true
+chrono.workspace = true
+clap.workspace = true
+globset.workspace = true
+hex.workspace = true
+rand.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+ureq.workspace = true

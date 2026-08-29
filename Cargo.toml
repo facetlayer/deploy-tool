@@ -1,0 +1,31 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/deploy-core",
+    "crates/deploy-server",
+    "crates/deploy-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+
+[workspace.dependencies]
+anyhow = "1"
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive", "env"] }
+globset = "0.4"
+hex = "0.4"
+rand = "0.8"
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
+ureq = { version = "2", default-features = false, features = ["json", "tls"] }
+
+[profile.release]
+opt-level = 2
