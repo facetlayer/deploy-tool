@@ -83,16 +83,21 @@ fn set_deployments_dir(directory: &str) -> Result<()> {
 /// and should be visible in the journal rather than inferred from behavior.
 fn print_auth_summary(config: &AuthCenterConfig, disable_api_key_check: bool) {
     println!("--- authorization ---");
-    println!("  auth-center:      {}", config.base_url);
-    println!("  admin resource:   {}", config.admin_resource);
-    println!("  every call is checked against deploy:<resource>:<action>");
     if disable_api_key_check {
+        // Say nothing about the auth-center configuration here: with the check
+        // disabled it is never consulted, and printing a URL next to the word
+        // "authorization" reads as though calls were still being checked.
         println!("  ***********************************************************");
         println!("  * WARNING: --disable-api-key-check is set.                 *");
         println!("  * Every call is allowed, from anyone, with no key at all.  *");
+        println!("  * auth-center is NOT consulted. Nothing is authorized.     *");
         println!("  * This is for local development only and must never be set *");
         println!("  * on do2 or dohl.                                          *");
         println!("  ***********************************************************");
+    } else {
+        println!("  auth-center:      {}", config.base_url);
+        println!("  admin resource:   {}", config.admin_resource);
+        println!("  every call is checked against deploy:<resource>:<action>");
     }
     println!("---------------------");
 }
