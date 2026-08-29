@@ -46,11 +46,8 @@ fn start(root: &TempRoot, responder: Responder) -> (StubAuthCenter, DeployServer
     let server = DeployServer::start(
         root,
         ServerOptions {
-            auth_url: Some(stub.base_url.clone()),
+            auth_url: stub.base_url.clone(),
             admin_resource: ADMIN_RESOURCE.to_string(),
-            // Legacy keys are the migration fallback; the authorization tests
-            // must not be able to pass through it by accident.
-            disable_legacy_keys: true,
             ..ServerOptions::default()
         },
     );
@@ -394,57 +391,35 @@ fn an_unregistered_project_denies() {
     );
 }
 
-/// A project carried over from the old tool, which created projects implicitly
-/// and had no resource column. Once auth-center checking is on, it cannot be
-/// deployed to until an administrator binds it.
+/// The Rollout section's recovery imports `project`, `deployment` and
+/// `active_deployment` from the old database, and no bindings: those are what
+/// an administrator re-establishes. Until then the project cannot be deployed
+/// to, and the refusal happens before auth-center is consulted.
 #[test]
 fn a_project_with_no_bound_resource_denies() {
     let root = TempRoot::new("authz-unbound");
+    let (stub, server) = start(&root, granting(standard_grants()));
 
-    // Phase 1: a legacy-only instance, where projects still spring into
-    // existence on first deploy.
-    let deploy_name;
-    let state_dir;
-    let deploys_dir;
-    {
-        let legacy_server = DeployServer::start(&root, ServerOptions::default());
-        let legacy_key = legacy_server.create_legacy_key();
-        let rpc = legacy_server.client(&legacy_key);
-        deploy_name = deploy(
-            &rpc,
-            "old-project",
-            &config_for("old-project", true, ""),
-            &[file("app.js", "v1\n")],
-        );
-        state_dir = legacy_server.state_dir.clone();
-        deploys_dir = legacy_server.deploys_dir.clone();
-    }
-
-    let bound: Option<String> = {
-        let conn = rusqlite::Connection::open(state_dir.join("db.sqlite")).unwrap();
-        conn.query_row(
-            "select resource_name from project where project_name = 'old-project'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap()
-    };
-    assert_eq!(bound, None, "the legacy path leaves the project unbound");
-
-    // Phase 2: the same instance, now checking against auth-center.
-    let stub = start_stub_auth_center(granting(standard_grants()));
-    let server = DeployServer::start_with_existing_state(
-        &root,
-        state_dir,
-        deploys_dir,
-        ServerOptions {
-            auth_url: Some(stub.base_url.clone()),
-            admin_resource: ADMIN_RESOURCE.to_string(),
-            disable_legacy_keys: true,
-            ..ServerOptions::default()
-        },
+    let admin = server.client(ADMIN_KEY);
+    admin.ok(
+        "createProject",
+        json!({ "projectName": "old-project", "resourceName": RESOURCE }),
+    );
+    let deploy_name = deploy(
+        &admin,
+        "old-project",
+        &config_for("old-project", true, ""),
+        &[file("app.js", "v1\n")],
     );
 
+    // Exactly the state an import leaves behind: the deployment bookkeeping,
+    // without the binding.
+    server
+        .open_db()
+        .execute("delete from project_resource_binding", [])
+        .unwrap();
+
+    stub.clear();
     let ci = server.client(CI_KEY);
     ci.denied("listDeployments", json!({ "projectName": "old-project" }));
     ci.denied("activateDeployment", json!({ "deployName": deploy_name }));
@@ -453,7 +428,7 @@ fn a_project_with_no_bound_resource_denies() {
         "an unbound project is refused before auth-center is consulted"
     );
 
-    // Binding it is the migration step, and needs no `rebind` flag.
+    // Binding it is all that is missing.
     server.client(ADMIN_KEY).ok(
         "createProject",
         json!({ "projectName": "old-project", "resourceName": RESOURCE }),
@@ -517,9 +492,8 @@ fn instance_with_failing_auth(
         state_dir,
         deploys_dir,
         ServerOptions {
-            auth_url: Some(broken.base_url.clone()),
+            auth_url: broken.base_url.clone(),
             admin_resource: ADMIN_RESOURCE.to_string(),
-            disable_legacy_keys: true,
             ..ServerOptions::default()
         },
     )
@@ -597,9 +571,8 @@ fn an_unreachable_auth_center_denies() {
         deploys_dir,
         ServerOptions {
             // Port 1 is reserved; nothing listens there.
-            auth_url: Some("http://127.0.0.1:1".to_string()),
+            auth_url: "http://127.0.0.1:1".to_string(),
             admin_resource: ADMIN_RESOURCE.to_string(),
-            disable_legacy_keys: true,
             ..ServerOptions::default()
         },
     );
@@ -631,18 +604,16 @@ fn the_same_project_name_on_two_instances_gives_different_verdicts() {
     let do2 = DeployServer::start(
         &staging_root,
         ServerOptions {
-            auth_url: Some(stub.base_url.clone()),
+            auth_url: stub.base_url.clone(),
             admin_resource: "deploy-do2".to_string(),
-            disable_legacy_keys: true,
             ..ServerOptions::default()
         },
     );
     let dohl = DeployServer::start(
         &prod_root,
         ServerOptions {
-            auth_url: Some(stub.base_url.clone()),
+            auth_url: stub.base_url.clone(),
             admin_resource: "deploy-dohl".to_string(),
-            disable_legacy_keys: true,
             ..ServerOptions::default()
         },
     );
@@ -674,134 +645,146 @@ fn the_same_project_name_on_two_instances_gives_different_verdicts() {
 }
 
 // ---------------------------------------------------------------------------
-// R6: legacy keys
+// R6: there is no local key table
 // ---------------------------------------------------------------------------
 
-/// Rollout step 3: auth-center is on, but the local `secret_key` table is still
-/// accepted so existing keys keep working while they are migrated.
+/// The old server kept a local `secret_key` table whose every row could do
+/// everything on the instance. It is removed, not deprecated: a key auth-center
+/// rejects is denied, and there is nothing in the database or the environment
+/// that brings the old behavior back.
 #[test]
-fn a_legacy_key_is_accepted_while_the_table_is_enabled_and_stamps_last_used_at() {
-    let root = TempRoot::new("legacy-enabled");
-
-    // An auth-center that denies everything except registration, so a legacy
-    // key that works can only have worked through the local table.
-    let stub = start_stub_auth_center(granting(vec![grant(
-        ADMIN_KEY,
-        &["deploy:deploy-test:create-project"],
-    )]));
-    let server = DeployServer::start(
-        &root,
-        ServerOptions {
-            auth_url: Some(stub.base_url.clone()),
-            admin_resource: ADMIN_RESOURCE.to_string(),
-            disable_legacy_keys: false,
-            ..ServerOptions::default()
-        },
-    );
+fn a_key_auth_center_rejects_is_denied_and_no_local_table_can_rescue_it() {
+    let root = TempRoot::new("no-local-keys");
+    let (_stub, server) = start(&root, granting(standard_grants()));
 
     server.client(ADMIN_KEY).ok(
         "createProject",
         json!({ "projectName": "hotlaps-api", "resourceName": RESOURCE }),
     );
 
-    let legacy_key = server.create_legacy_key();
-    let before: Option<String> = server
-        .open_db()
-        .query_row("select last_used_at from secret_key", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(before, None, "a fresh key has never been used");
-
-    let rpc = server.client(&legacy_key);
-    let deploy_name = deploy(
-        &rpc,
-        "hotlaps-api",
-        &config_for("hotlaps-api", true, ""),
-        &[file("app.js", "v1\n")],
-    );
-    assert_eq!(
-        read_file(&server.project_dir("hotlaps-api").join("app.js")),
-        "v1\n"
-    );
-
-    // R6: `deploy-server list-legacy-keys` needs this to report what still has
-    // to migrate.
-    let after: Option<String> = server
-        .open_db()
-        .query_row("select last_used_at from secret_key", [], |row| row.get(0))
-        .unwrap();
-    assert!(after.is_some(), "last_used_at should have been stamped");
-
-    // R7: the attribution namespace makes it obvious this went through the
-    // table rather than auth-center.
-    let listed = rpc.ok("listDeployments", json!({ "projectName": "hotlaps-api" }));
-    let entry = listed["deployments"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|entry| entry["deploy_name"] == deploy_name.as_str())
-        .unwrap();
-    assert!(entry["authorized_by_key_id"]
-        .as_str()
-        .unwrap()
-        .starts_with("legacy:"));
-
-    // An unknown key is still refused: the table is a list, not a bypass.
     server
-        .client("not-a-key")
+        .client("a-key-the-auth-service-has-never-heard-of")
         .denied("listDeployments", json!({ "projectName": "hotlaps-api" }));
+
+    let tables: Vec<String> = {
+        let conn = server.open_db();
+        let mut stmt = conn
+            .prepare("select name from sqlite_master where type = 'table'")
+            .unwrap();
+        let names = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        names
+    };
+    assert!(
+        !tables.iter().any(|name| name == "secret_key"),
+        "the local key table must not exist: {tables:?}"
+    );
+
+    // And no subcommand to put a key into one.
+    let help = String::from_utf8(
+        std::process::Command::new(server_binary())
+            .arg("--help")
+            .output()
+            .expect("could not run deploy-server --help")
+            .stdout,
+    )
+    .unwrap();
+    assert!(!help.contains("create-key"), "{help}");
+    assert!(!help.contains("legacy"), "{help}");
 }
 
-/// Rollout step 5: once an instance's keys have migrated, the table is turned
-/// off and the keys still sitting in it stop working.
+/// Restarting the instance with the flag that used to disable the old table
+/// changes nothing, because nothing reads it any more.
 #[test]
-fn a_legacy_key_is_rejected_once_the_table_is_disabled() {
-    let root = TempRoot::new("legacy-disabled");
+fn the_flag_that_used_to_control_legacy_keys_means_nothing() {
+    let root = TempRoot::new("no-legacy-flag");
     let stub = start_stub_auth_center(granting(standard_grants()));
-
-    let legacy_key;
-    let state_dir;
-    let deploys_dir;
-    {
-        let server = DeployServer::start(
-            &root,
-            ServerOptions {
-                auth_url: Some(stub.base_url.clone()),
-                admin_resource: ADMIN_RESOURCE.to_string(),
-                disable_legacy_keys: false,
-                ..ServerOptions::default()
-            },
-        );
-        server.client(ADMIN_KEY).ok(
-            "createProject",
-            json!({ "projectName": "hotlaps-api", "resourceName": RESOURCE }),
-        );
-        legacy_key = server.create_legacy_key();
-        server
-            .client(&legacy_key)
-            .ok("listDeployments", json!({ "projectName": "hotlaps-api" }));
-        state_dir = server.state_dir.clone();
-        deploys_dir = server.deploys_dir.clone();
-    }
+    let server = DeployServer::start(
+        &root,
+        ServerOptions {
+            auth_url: stub.base_url.clone(),
+            admin_resource: ADMIN_RESOURCE.to_string(),
+            ..ServerOptions::default()
+        },
+    );
+    server.client(ADMIN_KEY).ok(
+        "createProject",
+        json!({ "projectName": "hotlaps-api", "resourceName": RESOURCE }),
+    );
+    let state_dir = server.state_dir.clone();
+    let deploys_dir = server.deploys_dir.clone();
+    drop(server);
 
     let server = DeployServer::start_with_existing_state(
         &root,
         state_dir,
         deploys_dir,
         ServerOptions {
-            auth_url: Some(stub.base_url.clone()),
+            auth_url: stub.base_url.clone(),
             admin_resource: ADMIN_RESOURCE.to_string(),
-            disable_legacy_keys: true,
+            extra_env: vec![("DEPLOY_DISABLE_LEGACY_KEYS".to_string(), "0".to_string())],
             ..ServerOptions::default()
         },
     );
 
-    // The row is still in the table; it is simply no longer honored.
     server
-        .client(&legacy_key)
+        .client("some-old-key")
         .denied("listDeployments", json!({ "projectName": "hotlaps-api" }));
     // An auth-center key on the same instance still works.
-    server.client(ADMIN_KEY).ok(
-        "createProject",
-        json!({ "projectName": "hotlaps-api", "resourceName": RESOURCE }),
-    );
+    server
+        .client(ADMIN_KEY)
+        .ok("listDeployments", json!({ "projectName": "hotlaps-api" }));
+}
+
+// ---------------------------------------------------------------------------
+// Configuration
+// ---------------------------------------------------------------------------
+
+/// R6 leaves no fallback, so an instance missing any of the three variables
+/// cannot authenticate anyone. It refuses to start rather than come up in a
+/// state where every call is denied for a reason nobody can see.
+#[test]
+fn the_server_refuses_to_start_without_its_auth_configuration() {
+    let root = TempRoot::new("half-configured");
+    let state_dir = root.mkdir("state");
+
+    let complete = [
+        ("DEPLOY_AUTH_URL", "http://127.0.0.1:1"),
+        ("DEPLOY_AUTH_KEY", "instance-service-key"),
+        ("DEPLOY_ADMIN_RESOURCE", "deploy-test"),
+    ];
+
+    for omitted in 0..complete.len() {
+        let mut command = std::process::Command::new(server_binary());
+        command.env("DEPLOY_STATE_DIR", &state_dir);
+        command.env_remove("XDG_STATE_HOME");
+        for (index, (name, value)) in complete.iter().enumerate() {
+            if index == omitted {
+                command.env_remove(name);
+            } else {
+                command.env(name, value);
+            }
+        }
+
+        let output = command
+            .arg("serve")
+            .arg("--port")
+            .arg("0")
+            .output()
+            .expect("could not run deploy-server serve");
+        assert!(
+            !output.status.success(),
+            "serve should refuse to start without {}",
+            complete[omitted].0
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(complete[omitted].0),
+            "the refusal should name {}: {stderr}",
+            complete[omitted].0
+        );
+    }
 }

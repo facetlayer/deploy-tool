@@ -89,30 +89,28 @@ pub struct AuthCenterConfig {
 }
 
 impl AuthCenterConfig {
-    /// Reads the three variables together.
-    ///
-    /// `Ok(None)` means legacy-only: `DEPLOY_AUTH_URL` is unset, no network
-    /// calls are made. `Err` means half-configured, which the caller must treat
-    /// as fatal — starting with auth-center partly wired up is a security
+    /// Reads the three variables together. All are required: with no local key
+    /// table left (R6), an instance missing any of them cannot authenticate
+    /// anyone, so `Err` is fatal — starting half-configured is a security
     /// problem, not a degraded mode.
-    pub fn from_env() -> Result<Option<AuthCenterConfig>> {
-        let Some(base_url) = non_empty_env("DEPLOY_AUTH_URL") else {
-            return Ok(None);
-        };
+    pub fn from_env() -> Result<AuthCenterConfig> {
+        let base_url =
+            non_empty_env("DEPLOY_AUTH_URL").ok_or_else(|| missing("DEPLOY_AUTH_URL"))?;
+        let service_key =
+            non_empty_env("DEPLOY_AUTH_KEY").ok_or_else(|| missing("DEPLOY_AUTH_KEY"))?;
+        let admin_resource = non_empty_env("DEPLOY_ADMIN_RESOURCE")
+            .ok_or_else(|| missing("DEPLOY_ADMIN_RESOURCE"))?;
 
-        let service_key = non_empty_env("DEPLOY_AUTH_KEY").ok_or_else(|| {
-            anyhow!("DEPLOY_AUTH_URL is set but DEPLOY_AUTH_KEY is not; refusing to start")
-        })?;
-        let admin_resource = non_empty_env("DEPLOY_ADMIN_RESOURCE").ok_or_else(|| {
-            anyhow!("DEPLOY_AUTH_URL is set but DEPLOY_ADMIN_RESOURCE is not; refusing to start")
-        })?;
-
-        Ok(Some(AuthCenterConfig {
+        Ok(AuthCenterConfig {
             base_url: base_url.trim_end_matches('/').to_string(),
             service_key,
             admin_resource,
-        }))
+        })
     }
+}
+
+fn missing(name: &str) -> anyhow::Error {
+    anyhow!("{name} is not set; refusing to start. All of DEPLOY_AUTH_URL, DEPLOY_AUTH_KEY and DEPLOY_ADMIN_RESOURCE are required.")
 }
 
 fn non_empty_env(name: &str) -> Option<String> {
@@ -380,17 +378,18 @@ fn urlencode_segment(value: &str) -> String {
 }
 
 /// The process-wide client, installed once at startup so the positive cache is
-/// shared across requests. `None` means legacy-only.
-static GLOBAL: OnceLock<Option<AuthCenter>> = OnceLock::new();
+/// shared across requests.
+static GLOBAL: OnceLock<AuthCenter> = OnceLock::new();
 
 /// Installs the client for the lifetime of the process. Called once from
 /// `serve`; later calls are ignored.
-pub fn install(auth: Option<AuthCenter>) {
+pub fn install(auth: AuthCenter) {
     let _ = GLOBAL.set(auth);
 }
 
+/// `None` only before `install`, which `serve` does before it binds a port.
 pub fn global() -> Option<&'static AuthCenter> {
-    GLOBAL.get().and_then(Option::as_ref)
+    GLOBAL.get()
 }
 
 #[cfg(test)]
@@ -423,31 +422,24 @@ pub(crate) mod tests {
         assert_eq!(urlencode_segment("a b"), "a%20b");
     }
 
+    /// R6: there is no configuration in which the server runs without
+    /// auth-center, so every missing variable is fatal rather than a fallback.
     #[test]
-    fn config_is_legacy_only_when_url_is_unset() {
-        temp_env(&[("DEPLOY_AUTH_URL", None)], || {
-            assert!(AuthCenterConfig::from_env().unwrap().is_none());
-        });
-    }
+    fn every_missing_variable_refuses_to_start() {
+        let complete = [
+            ("DEPLOY_AUTH_URL", Some("https://auth.example")),
+            ("DEPLOY_AUTH_KEY", Some("svc")),
+            ("DEPLOY_ADMIN_RESOURCE", Some("deploy-do2")),
+        ];
 
-    #[test]
-    fn half_configured_is_an_error_not_a_degraded_mode() {
-        temp_env(
-            &[
-                ("DEPLOY_AUTH_URL", Some("https://auth.example")),
-                ("DEPLOY_AUTH_KEY", None),
-                ("DEPLOY_ADMIN_RESOURCE", Some("deploy-do2")),
-            ],
-            || assert!(AuthCenterConfig::from_env().is_err()),
-        );
-        temp_env(
-            &[
-                ("DEPLOY_AUTH_URL", Some("https://auth.example")),
-                ("DEPLOY_AUTH_KEY", Some("svc")),
-                ("DEPLOY_ADMIN_RESOURCE", None),
-            ],
-            || assert!(AuthCenterConfig::from_env().is_err()),
-        );
+        for missing in 0..complete.len() {
+            let mut env = complete;
+            env[missing].1 = None;
+            temp_env(&env, || {
+                let err = AuthCenterConfig::from_env().unwrap_err().to_string();
+                assert!(err.contains(complete[missing].0), "{err}");
+            });
+        }
     }
 
     #[test]
@@ -459,7 +451,7 @@ pub(crate) mod tests {
                 ("DEPLOY_ADMIN_RESOURCE", Some("deploy-do2")),
             ],
             || {
-                let config = AuthCenterConfig::from_env().unwrap().unwrap();
+                let config = AuthCenterConfig::from_env().unwrap();
                 assert_eq!(config.base_url, "https://auth.example");
                 assert_eq!(config.admin_resource, "deploy-do2");
             },

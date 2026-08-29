@@ -29,9 +29,8 @@ fn start(root: &TempRoot) -> (StubAuthCenter, DeployServer) {
     let server = DeployServer::start(
         root,
         ServerOptions {
-            auth_url: Some(stub.base_url.clone()),
+            auth_url: stub.base_url.clone(),
             admin_resource: "deploy-test".to_string(),
-            disable_legacy_keys: true,
             ..ServerOptions::default()
         },
     );

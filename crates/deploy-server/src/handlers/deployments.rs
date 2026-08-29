@@ -46,32 +46,52 @@ pub fn create_project(
 
     let conn = state.db();
 
-    let existing: Option<Option<String>> = conn
+    let existing: Option<String> = conn
         .query_row(
-            "select resource_name from project where project_name = ?",
+            "select resource_name from project_resource_binding where project_name = ?",
             [&project_name],
             |row| row.get(0),
         )
         .optional()?;
 
     let now = db::now_iso();
-    let changed_by = authorized_by.map(|key| key.key_id.clone());
+    let (changed_by_key_id, changed_by_key_name) = match authorized_by {
+        Some(key) => (Some(key.key_id.clone()), key.key_name.clone()),
+        None => (None, None),
+    };
+
+    let registered: bool = conn
+        .query_row(
+            "select 1 from project where project_name = ?",
+            [&project_name],
+            |_| Ok(true),
+        )
+        .optional()?
+        .unwrap_or(false);
+    if !registered {
+        conn.execute(
+            "insert into project (project_name, created_at) values (?, ?)",
+            rusqlite::params![project_name, now],
+        )?;
+    }
 
     let (outcome, previous_resource_name) = match existing {
         None => {
-            conn.execute(
-                "insert into project (project_name, created_at, resource_name, resource_bound_at)
-                 values (?, ?, ?, ?)",
-                rusqlite::params![project_name, now, resource_name, now],
+            bind_resource(
+                &conn,
+                &project_name,
+                &resource_name,
+                &now,
+                (&changed_by_key_id, &changed_by_key_name),
             )?;
             (CreateProjectOutcome::Created, None)
         }
-        Some(Some(bound)) if bound == resource_name => {
+        Some(bound) if bound == resource_name => {
             // Re-running the same registration is a no-op, and deliberately
-            // writes no audit row: nothing changed.
+            // writes no history row: nothing changed.
             (CreateProjectOutcome::Unchanged, Some(bound))
         }
-        Some(Some(bound)) => {
+        Some(bound) => {
             // Repointing a project at a different resource hands its deploy
             // rights to a different set of keys, so it is never implicit.
             if !params.rebind {
@@ -82,29 +102,30 @@ pub fn create_project(
                     resource_name
                 ));
             }
-            bind_resource(&conn, &project_name, &resource_name, &now)?;
+            bind_resource(
+                &conn,
+                &project_name,
+                &resource_name,
+                &now,
+                (&changed_by_key_id, &changed_by_key_name),
+            )?;
             (CreateProjectOutcome::Rebound, Some(bound))
-        }
-        Some(None) => {
-            // A project carried over from the old tool, which created projects
-            // implicitly and had no resource column. Binding it is the
-            // migration step, not a rebind, so it needs no `rebind` flag.
-            bind_resource(&conn, &project_name, &resource_name, &now)?;
-            (CreateProjectOutcome::Rebound, None)
         }
     };
 
     if outcome != CreateProjectOutcome::Unchanged {
         conn.execute(
-            "insert into project_resource_audit
-                (project_name, old_resource_name, new_resource_name, changed_at, changed_by)
-             values (?, ?, ?, ?, ?)",
+            "insert into project_resource_binding_history
+                (project_name, previous_resource_name, resource_name, changed_at,
+                 changed_by_key_id, changed_by_key_name)
+             values (?, ?, ?, ?, ?, ?)",
             rusqlite::params![
                 project_name,
                 previous_resource_name,
                 resource_name,
                 now,
-                changed_by
+                changed_by_key_id,
+                changed_by_key_name
             ],
         )?;
     }
@@ -120,53 +141,43 @@ pub fn create_project(
     })?)
 }
 
+/// Writes the current binding. The history row is written by the caller, which
+/// knows whether anything actually changed.
 fn bind_resource(
     conn: &Connection,
     project_name: &str,
     resource_name: &str,
     now: &str,
+    changed_by: (&Option<String>, &Option<String>),
 ) -> Result<()> {
     conn.execute(
-        "update project set resource_name = ?, resource_bound_at = ? where project_name = ?",
-        rusqlite::params![resource_name, now, project_name],
+        "insert into project_resource_binding
+            (project_name, resource_name, bound_at, bound_by_key_id, bound_by_key_name)
+         values (?, ?, ?, ?, ?)
+         on conflict(project_name) do update set
+            resource_name = excluded.resource_name,
+            bound_at = excluded.bound_at,
+            bound_by_key_id = excluded.bound_by_key_id,
+            bound_by_key_name = excluded.bound_by_key_name",
+        rusqlite::params![project_name, resource_name, now, changed_by.0, changed_by.1],
     )?;
     Ok(())
 }
 
-/// R1: a deploy may only target a project that is registered and bound, once
-/// auth-center checking is enabled. Before that, the old implicit-create
-/// behavior stands, so enabling the resource model changes nothing on its own.
-fn ensure_project_registered(
-    conn: &Connection,
-    project_name: &str,
-    auth_center_enabled: bool,
-) -> Result<()> {
-    let existing: Option<Option<String>> = conn
+/// R1: a deploy may only target a project that is registered and bound to a
+/// resource. There is no implicit-create path: an unbound project is one no key
+/// can be checked against, which R2 says must be a denial rather than a guess.
+fn ensure_project_registered(conn: &Connection, project_name: &str) -> Result<()> {
+    let bound: Option<String> = conn
         .query_row(
-            "select resource_name from project where project_name = ?",
+            "select resource_name from project_resource_binding where project_name = ?",
             [project_name],
             |row| row.get(0),
         )
         .optional()?;
 
-    if !auth_center_enabled {
-        if existing.is_none() {
-            conn.execute(
-                "insert into project (project_name, created_at) values (?, ?)",
-                rusqlite::params![project_name, db::now_iso()],
-            )?;
-        }
-        return Ok(());
-    }
-
-    match existing {
-        Some(Some(_)) => Ok(()),
-        Some(None) => Err(anyhow!(
-            "Project '{}' is not bound to an auth-center resource on this server. \
-             Run: deploy create-project {} --resource <resourceName>",
-            project_name,
-            project_name
-        )),
+    match bound {
+        Some(_) => Ok(()),
         None => Err(anyhow!(
             "Project '{}' is not registered on this server. \
              Run: deploy create-project {} --resource <resourceName>",
@@ -191,7 +202,7 @@ pub fn create_deployment(
     let conn = state.db();
     database_cleanup(&conn)?;
 
-    ensure_project_registered(&conn, &project_name, state.auth_center_enabled)?;
+    ensure_project_registered(&conn, &project_name)?;
 
     let deploy_id = db::take_next_deploy_id(&conn)?;
     let deploy_name = format!("{}-{}", project_name, deploy_id);

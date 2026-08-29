@@ -313,21 +313,27 @@ pub fn granting(grants: Vec<KeyGrant>) -> Responder {
 // ---------------------------------------------------------------------------
 
 pub struct ServerOptions {
-    pub auth_url: Option<String>,
+    pub auth_url: String,
     pub auth_key: String,
     pub admin_resource: String,
-    pub disable_legacy_keys: bool,
     pub disable_api_key_check: bool,
+    /// Extra environment for the server process, so a test can prove that a
+    /// variable the server no longer reads has no effect.
+    pub extra_env: Vec<(String, String)>,
 }
 
 impl Default for ServerOptions {
     fn default() -> ServerOptions {
         ServerOptions {
-            auth_url: None,
+            // Port 1 is reserved and nothing listens there. The server requires
+            // an auth-center URL to start at all, so the default is one that
+            // denies everything by being unreachable (R4) rather than one that
+            // quietly allows anything.
+            auth_url: "http://127.0.0.1:1".to_string(),
             auth_key: "instance-service-key".to_string(),
             admin_resource: "deploy-test".to_string(),
-            disable_legacy_keys: false,
             disable_api_key_check: false,
+            extra_env: Vec::new(),
         }
     }
 }
@@ -366,7 +372,7 @@ fn workspace_binary(name: &str, compiled_in: Option<&'static str>) -> PathBuf {
     candidate
 }
 
-fn server_binary() -> PathBuf {
+pub fn server_binary() -> PathBuf {
     workspace_binary("deploy-server", option_env!("CARGO_BIN_EXE_deploy-server"))
 }
 
@@ -409,7 +415,6 @@ fn base_command(state_dir: &Path) -> Command {
         "DEPLOY_AUTH_URL",
         "DEPLOY_AUTH_KEY",
         "DEPLOY_ADMIN_RESOURCE",
-        "DEPLOY_DISABLE_LEGACY_KEYS",
         "XDG_STATE_HOME",
     ] {
         command.env_remove(name);
@@ -460,13 +465,12 @@ impl DeployServer {
             if options.disable_api_key_check {
                 command.arg("--disable-api-key-check");
             }
-            if let Some(url) = &options.auth_url {
-                command.env("DEPLOY_AUTH_URL", url);
-                command.env("DEPLOY_AUTH_KEY", &options.auth_key);
-                command.env("DEPLOY_ADMIN_RESOURCE", &options.admin_resource);
-            }
-            if options.disable_legacy_keys {
-                command.env("DEPLOY_DISABLE_LEGACY_KEYS", "1");
+            // All three are required; the server refuses to start without them.
+            command.env("DEPLOY_AUTH_URL", &options.auth_url);
+            command.env("DEPLOY_AUTH_KEY", &options.auth_key);
+            command.env("DEPLOY_ADMIN_RESOURCE", &options.admin_resource);
+            for (name, value) in &options.extra_env {
+                command.env(name, value);
             }
 
             let child = command
@@ -552,28 +556,13 @@ impl DeployServer {
         self.state_dir.join("db.sqlite")
     }
 
-    /// Opens the instance's database directly. Used for the few assertions that
-    /// have no RPC surface — `secret_key.last_used_at`, and the migration case
-    /// of a project row that predates resource binding.
+    /// Opens the instance's database directly. Used for the few assertions and
+    /// fixtures that have no RPC surface, such as a project row with no
+    /// resource binding.
     pub fn open_db(&self) -> Connection {
         let conn = Connection::open(self.db_path()).unwrap();
         conn.pragma_update(None, "busy_timeout", 5000).unwrap();
         conn
-    }
-
-    /// Generates a legacy `secret_key` row and returns its text.
-    pub fn create_legacy_key(&self) -> String {
-        let output = base_command(&self.state_dir)
-            .arg("create-key")
-            .output()
-            .expect("could not run create-key");
-        assert!(output.status.success());
-        String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .find_map(|line| line.strip_prefix("Generated new secret key: "))
-            .expect("create-key should print the key")
-            .trim()
-            .to_string()
     }
 
     pub fn project_dir(&self, name: &str) -> PathBuf {

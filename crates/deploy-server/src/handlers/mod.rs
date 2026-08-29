@@ -83,7 +83,7 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{Duration, SystemTime};
 
-    use rusqlite::Connection;
+    use rusqlite::{Connection, OptionalExtension};
     use serde_json::json;
 
     use deploy_core::hash::get_file_hash;
@@ -132,8 +132,34 @@ mod tests {
             self.deploys_dir.join(project)
         }
 
-        /// Creates a deployment and returns its deploy name.
+        /// Registers a project against a resource of its own. A no-op if the
+        /// project is already bound, so a test can deploy twice.
+        fn register(&self, project: &str) {
+            let already_bound: bool = self
+                .state
+                .db()
+                .query_row(
+                    "select 1 from project_resource_binding where project_name = ?",
+                    [project],
+                    |_| Ok(true),
+                )
+                .optional()
+                .unwrap()
+                .unwrap_or(false);
+            if already_bound {
+                return;
+            }
+            self.call(
+                methods::CREATE_PROJECT,
+                json!({ "projectName": project, "resourceName": format!("{project}-resource") }),
+            )
+            .unwrap();
+        }
+
+        /// Registers the project if it is new, then creates a deployment and
+        /// returns its deploy name.
         fn create_deployment(&self, project: &str, manifest: Json, config: &str) -> String {
+            self.register(project);
             let result = self
                 .call(
                     methods::CREATE_DEPLOYMENT,
@@ -186,6 +212,7 @@ mod tests {
     fn create_deployment_makes_a_record_and_its_directories() {
         let server = setup("create");
         let config = config_for("test-project", "");
+        server.register("test-project");
 
         let result = server
             .call(
@@ -261,24 +288,29 @@ mod tests {
         assert_eq!(result["resourceVerified"], false);
 
         let conn = server.state.db();
-        let bound: String = conn
+        let bound: (String, Option<String>) = conn
             .query_row(
-                "select resource_name from project where project_name = 'hotlaps-api'",
+                "select resource_name, bound_by_key_id from project_resource_binding
+                 where project_name = 'hotlaps-api'",
                 [],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
-        assert_eq!(bound, "hotlaps-staging");
+        assert_eq!(
+            bound,
+            ("hotlaps-staging".to_string(), Some("key-abc".to_string()))
+        );
 
-        let audit: (Option<String>, String, Option<String>) = conn
+        let history: (Option<String>, String, Option<String>) = conn
             .query_row(
-                "select old_resource_name, new_resource_name, changed_by from project_resource_audit",
+                "select previous_resource_name, resource_name, changed_by_key_id
+                 from project_resource_binding_history",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .unwrap();
         assert_eq!(
-            audit,
+            history,
             (
                 None,
                 "hotlaps-staging".to_string(),
@@ -299,14 +331,16 @@ mod tests {
 
         assert_eq!(result["outcome"], "unchanged");
 
-        // Unchanged means unchanged: no second audit row.
+        // Unchanged means unchanged: no second history row.
         let conn = server.state.db();
-        let audit_rows: i64 = conn
-            .query_row("select count(*) from project_resource_audit", [], |row| {
-                row.get(0)
-            })
+        let history_rows: i64 = conn
+            .query_row(
+                "select count(*) from project_resource_binding_history",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
-        assert_eq!(audit_rows, 1);
+        assert_eq!(history_rows, 1);
     }
 
     #[test]
@@ -345,16 +379,17 @@ mod tests {
         assert_eq!(result["previousResourceName"], "hotlaps-staging");
 
         let conn = server.state.db();
-        let audit: (Option<String>, String) = conn
+        let history: (Option<String>, String) = conn
             .query_row(
-                "select old_resource_name, new_resource_name from project_resource_audit
-                 order by audit_id desc limit 1",
+                "select previous_resource_name, resource_name
+                 from project_resource_binding_history
+                 order by history_id desc limit 1",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
         assert_eq!(
-            audit,
+            history,
             (
                 Some("hotlaps-staging".to_string()),
                 "hotlaps-prod".to_string()
@@ -376,9 +411,8 @@ mod tests {
     }
 
     #[test]
-    fn deploying_to_an_unregistered_project_is_refused_when_auth_center_is_on() {
-        let mut server = setup("r1-unregistered");
-        server.state.auth_center_enabled = true;
+    fn deploying_to_an_unregistered_project_is_refused() {
+        let server = setup("r1-unregistered");
 
         let config = config_for("unregistered", "");
         let err = server
@@ -397,9 +431,8 @@ mod tests {
     }
 
     #[test]
-    fn deploying_to_a_registered_project_is_allowed_when_auth_center_is_on() {
-        let mut server = setup("r1-registered");
-        server.state.auth_center_enabled = true;
+    fn deploying_to_a_registered_project_is_allowed() {
+        let server = setup("r1-registered");
 
         server
             .call(
@@ -413,37 +446,35 @@ mod tests {
         assert!(deploy_name.starts_with("registered-"));
     }
 
+    /// The Rollout section's recovery imports `project` rows from the old
+    /// database, and those carry no binding: the binding is the part an
+    /// administrator has to re-establish before the project can be deployed to.
     #[test]
-    fn a_project_carried_over_without_a_resource_cannot_be_deployed_to() {
-        let mut server = setup("r1-unbound");
+    fn an_imported_project_row_without_a_binding_cannot_be_deployed_to() {
+        let server = setup("r1-unbound");
 
-        // A project row from the old tool, which had no resource column.
         {
             let conn = server.state.db();
             conn.execute(
-                "insert into project (project_name, created_at) values ('legacy-project', ?)",
+                "insert into project (project_name, created_at) values ('imported-project', ?)",
                 rusqlite::params![db::now_iso()],
             )
             .unwrap();
         }
-        server.state.auth_center_enabled = true;
 
-        let config = config_for("legacy-project", "");
+        let config = config_for("imported-project", "");
         let err = server
             .call(
                 methods::CREATE_DEPLOYMENT,
                 json!({
-                    "projectName": "legacy-project",
+                    "projectName": "imported-project",
                     "sourceFileManifest": [],
                     "sourceFileConfig": config,
                 }),
             )
             .unwrap_err()
             .to_string();
-        assert!(
-            err.contains("not bound to an auth-center resource"),
-            "{err}"
-        );
+        assert!(err.contains("is not registered on this server"), "{err}");
     }
 
     // --- getNeededFiles ---
@@ -1013,6 +1044,7 @@ mod tests {
     fn deployment_tags_round_trip_through_the_database() {
         let server = setup("tags");
         let config = config_for("tags-project", "");
+        server.register("tags-project");
         let deploy_name = server
             .call(
                 methods::CREATE_DEPLOYMENT,

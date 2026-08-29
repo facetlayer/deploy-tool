@@ -214,8 +214,9 @@ mod tests {
 
     #[test]
     fn goobernetes_env_var_is_the_second_choice() {
-        let env = |name: &str| (name == "GOOBERNETES_API_KEY").then(|| "legacy-key".to_string());
-        assert_eq!(find(None, &env).as_deref(), Some("legacy-key"));
+        let env =
+            |name: &str| (name == "GOOBERNETES_API_KEY").then(|| "goobernetes-key".to_string());
+        assert_eq!(find(None, &env).as_deref(), Some("goobernetes-key"));
     }
 
     #[test]

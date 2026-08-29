@@ -20,7 +20,7 @@ fn start(root: &TempRoot) -> (StubAuthCenter, DeployServer) {
     let server = DeployServer::start(
         root,
         ServerOptions {
-            auth_url: Some(stub.base_url.clone()),
+            auth_url: stub.base_url.clone(),
             ..ServerOptions::default()
         },
     );

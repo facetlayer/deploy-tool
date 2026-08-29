@@ -59,10 +59,19 @@ fn authorize_request(
     method: &str,
     params: &Json,
 ) -> Result<AuthorizedKey, Denial> {
+    // `serve` installs the client before it binds a port, so this is
+    // unreachable in practice — and a denial rather than an assumption, because
+    // no missing piece of configuration may ever result in an allow (R2).
+    let Some(auth) = auth_center::global() else {
+        return Err(Denial::AuthUnavailable(
+            "the auth-center client is not installed".to_string(),
+        ));
+    };
+
     let conn = state.db();
     let ctx = AuthzContext {
         conn: &conn,
-        auth: auth_center::global(),
+        auth,
         disable_api_key_check: state.disable_api_key_check,
     };
     authz::authorize(&ctx, api_key, method, params)
@@ -190,10 +199,6 @@ async fn handle_json_rpc(
 }
 
 pub async fn start_server(options: StartServerOptions) -> Result<()> {
-    if options.disable_api_key_check {
-        eprintln!("warning: API key check is disabled");
-    }
-
     let conn = db::open_database()?;
     let deploy_dir = db::get_deployments_dir(&conn)?;
 

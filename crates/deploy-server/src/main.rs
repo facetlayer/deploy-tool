@@ -1,8 +1,7 @@
 //! `deploy-server` — the deploy backend. One instance per host.
 //!
-//! Subcommands ported from `~/tools/deploy/rust/src/main.rs`, plus
-//! `list-legacy-keys`, which R6 requires so an operator can see which local
-//! `secret_key` rows still have to migrate before the table is turned off.
+//! Subcommands ported from `~/tools/deploy/rust/src/main.rs`. There is no
+//! key-management subcommand: keys live in auth-center (R6).
 
 mod auth_center;
 mod authz;
@@ -31,7 +30,9 @@ struct Cli {
 enum Commands {
     /// Start the deploy server
     Serve {
-        /// Disable API key validation. Development only.
+        /// LOCAL DEVELOPMENT ONLY: accept every call without checking any API
+        /// key. Never set this on do2 or dohl — it disables authorization
+        /// outright, and it is not a way to keep old keys working.
         #[arg(long)]
         disable_api_key_check: bool,
         /// Port number for the server
@@ -40,11 +41,6 @@ enum Commands {
     },
     /// Set the directory where deployments are stored
     SetDeploymentsDir { directory: String },
-    /// Generate a new legacy secret API key in the local table
-    CreateKey,
-    /// List the local secret keys that still exist, so the migration to
-    /// auth-center can be finished (R6). Never prints the key text.
-    ListLegacyKeys,
     /// Dump the parsed form of a .deploy config as JSON. Used to diff this
     /// parser against the TypeScript @facetlayer/qc implementation.
     #[command(hide = true)]
@@ -83,101 +79,31 @@ fn set_deployments_dir(directory: &str) -> Result<()> {
     Ok(())
 }
 
-fn create_key() -> Result<()> {
-    use rand::RngCore;
-
-    let mut bytes = [0u8; 30];
-    rand::thread_rng().fill_bytes(&mut bytes);
-    let key_text = hex::encode(bytes);
-
-    let conn = db::open_database()?;
-    conn.execute(
-        "insert into secret_key (key_text, created_at) values (?, ?)",
-        rusqlite::params![&key_text, db::now_iso()],
-    )?;
-
-    println!("Generated new secret key: {}", key_text);
-    Ok(())
-}
-
-/// R6. Deliberately does not select `key_text`: this command exists to plan a
-/// migration, not to recover key material.
-fn list_legacy_keys() -> Result<()> {
-    let conn = db::open_database()?;
-    let mut stmt = conn.prepare(
-        "select key_id, label, created_at, last_used_at from secret_key order by key_id",
-    )?;
-    let rows: Vec<(i64, Option<String>, String, Option<String>)> = stmt
-        .query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-        })?
-        .collect::<std::result::Result<_, _>>()?;
-
-    if rows.is_empty() {
-        println!(
-            "No legacy secret keys remain. This instance can set DEPLOY_DISABLE_LEGACY_KEYS=1."
-        );
-        return Ok(());
-    }
-
-    println!(
-        "{:<8} {:<24} {:<26} {}",
-        "ID", "LABEL", "CREATED", "LAST USED"
-    );
-    for (key_id, label, created_at, last_used_at) in &rows {
-        println!(
-            "{:<8} {:<24} {:<26} {}",
-            key_id,
-            label.as_deref().unwrap_or("-"),
-            created_at,
-            last_used_at.as_deref().unwrap_or("never")
-        );
-    }
-    println!();
-    println!(
-        "{} legacy key(s) remain. Each grants every action on this instance.",
-        rows.len()
-    );
-    if !authz::legacy_keys_enabled() {
-        println!("DEPLOY_DISABLE_LEGACY_KEYS=1 is set, so none of them are currently accepted.");
-    }
-    Ok(())
-}
-
 /// Printed at startup because a misconfigured auth setup is a security problem
 /// and should be visible in the journal rather than inferred from behavior.
-fn print_auth_summary(config: Option<&AuthCenterConfig>, disable_api_key_check: bool) {
+fn print_auth_summary(config: &AuthCenterConfig, disable_api_key_check: bool) {
     println!("--- authorization ---");
-    match config {
-        Some(config) => {
-            println!("  auth-center:      {}", config.base_url);
-            println!("  admin resource:   {}", config.admin_resource);
-        }
-        None => {
-            println!("  auth-center:      not configured (legacy-only)");
-            println!("  admin resource:   n/a; createProject is denied");
-        }
-    }
-    if authz::legacy_keys_enabled() {
-        println!("  legacy keys:      ENABLED (local secret_key table grants everything)");
-    } else {
-        println!("  legacy keys:      disabled (DEPLOY_DISABLE_LEGACY_KEYS=1)");
-    }
-    if config.is_none() && !authz::legacy_keys_enabled() && !disable_api_key_check {
-        println!("  WARNING: no auth-center and no legacy keys: every call will be denied.");
-    }
+    println!("  auth-center:      {}", config.base_url);
+    println!("  admin resource:   {}", config.admin_resource);
+    println!("  every call is checked against deploy:<resource>:<action>");
     if disable_api_key_check {
-        println!("  WARNING: --disable-api-key-check is set; every call is allowed.");
+        println!("  ***********************************************************");
+        println!("  * WARNING: --disable-api-key-check is set.                 *");
+        println!("  * Every call is allowed, from anyone, with no key at all.  *");
+        println!("  * This is for local development only and must never be set *");
+        println!("  * on do2 or dohl.                                          *");
+        println!("  ***********************************************************");
     }
     println!("---------------------");
 }
 
 fn serve(disable_api_key_check: bool, port: u16) -> Result<()> {
-    // Refuse to start half-configured rather than silently falling back to
-    // legacy-only, which would look like it was working.
+    // All three variables are required (R6): with no local key table, an
+    // instance missing any of them cannot authenticate anyone, so refuse to
+    // start rather than come up half-configured.
     let config = AuthCenterConfig::from_env()?;
-    print_auth_summary(config.as_ref(), disable_api_key_check);
-    auth_center::install(config.map(AuthCenter::new));
+    print_auth_summary(&config, disable_api_key_check);
+    auth_center::install(AuthCenter::new(config));
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -198,8 +124,6 @@ fn main() -> Result<()> {
             port,
         } => serve(disable_api_key_check, port),
         Commands::SetDeploymentsDir { directory } => set_deployments_dir(&directory),
-        Commands::CreateKey => create_key(),
-        Commands::ListLegacyKeys => list_legacy_keys(),
         Commands::DebugParseConfig { file } => debug_parse_config(&file),
     }
 }
