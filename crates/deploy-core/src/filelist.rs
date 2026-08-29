@@ -379,7 +379,13 @@ pub fn find_leftover_files(
     rules: &[FileMatchRule],
 ) -> FileList {
     let mut leftovers = FileList::new();
-    scan_directory(target_dir, target_dir, incoming_files, rules, &mut leftovers);
+    scan_directory(
+        target_dir,
+        target_dir,
+        incoming_files,
+        rules,
+        &mut leftovers,
+    );
     leftovers
 }
 
@@ -403,8 +409,10 @@ fn scan_directory(
         };
 
         let should_ignore = rules.iter().any(|rule| {
-            matches!(rule.rule_type, RuleType::IgnoreDestination | RuleType::Ignore)
-                && rule.is_match(&rel_path)
+            matches!(
+                rule.rule_type,
+                RuleType::IgnoreDestination | RuleType::Ignore
+            ) && rule.is_match(&rel_path)
         });
 
         if should_ignore {
@@ -649,7 +657,10 @@ mod tests {
     #[test]
     fn include_a_file_inside_a_subdirectory() {
         let dir = sample_dir("include-nested-file");
-        assert_eq!(resolved(&dir, "include dir-2/file-4\n"), vec!["dir-2/file-4"]);
+        assert_eq!(
+            resolved(&dir, "include dir-2/file-4\n"),
+            vec!["dir-2/file-4"]
+        );
     }
 
     #[test]

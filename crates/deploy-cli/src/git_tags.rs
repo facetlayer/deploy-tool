@@ -14,7 +14,10 @@ struct GitOutput {
 }
 
 fn run_git(args: &[&str], local_dir: &Path) -> Result<GitOutput> {
-    let output = Command::new("git").args(args).current_dir(local_dir).output()?;
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(local_dir)
+        .output()?;
 
     Ok(GitOutput {
         ok: output.status.success(),

@@ -15,7 +15,11 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "deploy", version, about = "Deploy a project to a deploy-server instance")]
+#[command(
+    name = "deploy",
+    version,
+    about = "Deploy a project to a deploy-server instance"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -276,7 +280,14 @@ mod tests {
 
     #[test]
     fn run_accepts_several_config_files() {
-        let cli = Cli::parse_from(["deploy", "run", "a.qc", "b.qc", "--override-dest", "http://x"]);
+        let cli = Cli::parse_from([
+            "deploy",
+            "run",
+            "a.qc",
+            "b.qc",
+            "--override-dest",
+            "http://x",
+        ]);
         match cli.command {
             Command::Run {
                 config_file,

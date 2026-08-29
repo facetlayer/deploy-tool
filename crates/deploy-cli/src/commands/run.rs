@@ -50,7 +50,10 @@ pub fn run(config_file: &Path, override_dest: Option<&str>) -> Result<()> {
         if !status.success() {
             bail!(
                 "before-deploy command failed with exit code: {}",
-                status.code().map(|c| c.to_string()).unwrap_or_else(|| "signal".to_string())
+                status
+                    .code()
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "signal".to_string())
             );
         }
     }
@@ -120,15 +123,19 @@ pub fn run(config_file: &Path, override_dest: Option<&str>) -> Result<()> {
     if verify.status == VerifyStatus::Error {
         bail!(
             "Deployment verification failed: {}",
-            verify.error.unwrap_or_else(|| "(no reason given)".to_string())
+            verify
+                .error
+                .unwrap_or_else(|| "(no reason given)".to_string())
         );
     }
 
     println!("Deployment is verified ({}s)", timer.check_elapsed_secs());
 
-    setup.client.activate_deployment(&ActivateDeploymentParams {
-        deploy_name: deploy_name.clone(),
-    })?;
+    setup
+        .client
+        .activate_deployment(&ActivateDeploymentParams {
+            deploy_name: deploy_name.clone(),
+        })?;
 
     println!("Deployment is active ({}s)", timer.check_elapsed_secs());
 
@@ -181,7 +188,12 @@ fn upload_all(
                 }
 
                 let file_entry = &needed_files[index];
-                println!("Uploading [{}/{}]: {}", index + 1, total, file_entry.rel_path);
+                println!(
+                    "Uploading [{}/{}]: {}",
+                    index + 1,
+                    total,
+                    file_entry.rel_path
+                );
 
                 if let Err(err) = upload_one(client, deploy_name, file_entry, sources, local_dir) {
                     errors
@@ -313,7 +325,10 @@ mod tests {
     fn chunk_offsets_step_by_the_chunk_size() {
         assert_eq!(chunk_starts(1), vec![0]);
         assert_eq!(chunk_starts(CHUNK_SIZE_BYTES), vec![0]);
-        assert_eq!(chunk_starts(CHUNK_SIZE_BYTES + 1), vec![0, CHUNK_SIZE_BYTES]);
+        assert_eq!(
+            chunk_starts(CHUNK_SIZE_BYTES + 1),
+            vec![0, CHUNK_SIZE_BYTES]
+        );
         assert_eq!(
             chunk_starts(CHUNK_SIZE_BYTES * 3),
             vec![0, CHUNK_SIZE_BYTES, CHUNK_SIZE_BYTES * 2]

@@ -34,7 +34,11 @@ pub fn history(config_file: &Path, override_dest: Option<&str>, limit: i64) -> R
     println!();
 
     for deployment in &result.deployments {
-        let active_marker = if deployment.is_active { " <- active" } else { "" };
+        let active_marker = if deployment.is_active {
+            " <- active"
+        } else {
+            ""
+        };
         let commit_label = deployment
             .tags
             .as_ref()

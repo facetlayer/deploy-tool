@@ -465,35 +465,119 @@ pub struct MethodSpec {
 /// source: the action table in docs/auth-integration.md (D1).
 pub const METHOD_TABLE: &[MethodSpec] = &[
     // deploy
-    spec(methods::CREATE_DEPLOYMENT, Action::Deploy, ProjectResolution::ByProjectName),
-    spec(methods::ADD_MANIFEST_FILES, Action::Deploy, ProjectResolution::ByDeployName),
-    spec(methods::FINALIZE_MANIFEST, Action::Deploy, ProjectResolution::ByDeployName),
-    spec(methods::GET_NEEDED_FILES, Action::Deploy, ProjectResolution::ByDeployName),
-    spec(methods::UPLOAD_ONE_FILE, Action::Deploy, ProjectResolution::ByDeployName),
-    spec(methods::START_MULTIPART_UPLOAD, Action::Deploy, ProjectResolution::ByDeployName),
-    spec(methods::UPLOAD_FILE_PART, Action::Deploy, ProjectResolution::ByDeployName),
-    spec(methods::FINISH_MULTIPART_UPLOAD, Action::Deploy, ProjectResolution::ByDeployName),
-    spec(methods::FINISH_UPLOADS, Action::Deploy, ProjectResolution::ByDeployName),
-    spec(methods::VERIFY_DEPLOYMENT, Action::Deploy, ProjectResolution::ByDeployName),
-    spec(methods::ACTIVATE_DEPLOYMENT, Action::Deploy, ProjectResolution::ByDeployName),
+    spec(
+        methods::CREATE_DEPLOYMENT,
+        Action::Deploy,
+        ProjectResolution::ByProjectName,
+    ),
+    spec(
+        methods::ADD_MANIFEST_FILES,
+        Action::Deploy,
+        ProjectResolution::ByDeployName,
+    ),
+    spec(
+        methods::FINALIZE_MANIFEST,
+        Action::Deploy,
+        ProjectResolution::ByDeployName,
+    ),
+    spec(
+        methods::GET_NEEDED_FILES,
+        Action::Deploy,
+        ProjectResolution::ByDeployName,
+    ),
+    spec(
+        methods::UPLOAD_ONE_FILE,
+        Action::Deploy,
+        ProjectResolution::ByDeployName,
+    ),
+    spec(
+        methods::START_MULTIPART_UPLOAD,
+        Action::Deploy,
+        ProjectResolution::ByDeployName,
+    ),
+    spec(
+        methods::UPLOAD_FILE_PART,
+        Action::Deploy,
+        ProjectResolution::ByDeployName,
+    ),
+    spec(
+        methods::FINISH_MULTIPART_UPLOAD,
+        Action::Deploy,
+        ProjectResolution::ByDeployName,
+    ),
+    spec(
+        methods::FINISH_UPLOADS,
+        Action::Deploy,
+        ProjectResolution::ByDeployName,
+    ),
+    spec(
+        methods::VERIFY_DEPLOYMENT,
+        Action::Deploy,
+        ProjectResolution::ByDeployName,
+    ),
+    spec(
+        methods::ACTIVATE_DEPLOYMENT,
+        Action::Deploy,
+        ProjectResolution::ByDeployName,
+    ),
     // read
-    spec(methods::LIST_DEPLOYMENTS, Action::Read, ProjectResolution::ByProjectName),
-    spec(methods::GET_DEPLOYMENT_TAGS, Action::Read, ProjectResolution::ByProjectName),
-    spec(methods::PREVIEW_DEPLOYMENT, Action::Read, ProjectResolution::ByProjectName),
-    spec(methods::PREVIEW_BY_DEPLOY_NAME, Action::Read, ProjectResolution::ByDeployName),
-    spec(methods::DOWNLOAD_FILE, Action::Read, ProjectResolution::ByProjectName),
-    spec(methods::LIST_DATABASES, Action::Read, ProjectResolution::ByProjectName),
+    spec(
+        methods::LIST_DEPLOYMENTS,
+        Action::Read,
+        ProjectResolution::ByProjectName,
+    ),
+    spec(
+        methods::GET_DEPLOYMENT_TAGS,
+        Action::Read,
+        ProjectResolution::ByProjectName,
+    ),
+    spec(
+        methods::PREVIEW_DEPLOYMENT,
+        Action::Read,
+        ProjectResolution::ByProjectName,
+    ),
+    spec(
+        methods::PREVIEW_BY_DEPLOY_NAME,
+        Action::Read,
+        ProjectResolution::ByDeployName,
+    ),
+    spec(
+        methods::DOWNLOAD_FILE,
+        Action::Read,
+        ProjectResolution::ByProjectName,
+    ),
+    spec(
+        methods::LIST_DATABASES,
+        Action::Read,
+        ProjectResolution::ByProjectName,
+    ),
     // sql
-    spec(methods::EXECUTE_SQL, Action::Sql, ProjectResolution::ByProjectName),
+    spec(
+        methods::EXECUTE_SQL,
+        Action::Sql,
+        ProjectResolution::ByProjectName,
+    ),
     // rollback: params carry both names, and projectName is authoritative —
     // the handler still checks the deployment belongs to that project.
-    spec(methods::ROLLBACK, Action::Rollback, ProjectResolution::ByProjectName),
+    spec(
+        methods::ROLLBACK,
+        Action::Rollback,
+        ProjectResolution::ByProjectName,
+    ),
     // create-project
-    spec(methods::CREATE_PROJECT, Action::CreateProject, ProjectResolution::InstanceAdministration),
+    spec(
+        methods::CREATE_PROJECT,
+        Action::CreateProject,
+        ProjectResolution::InstanceAdministration,
+    ),
 ];
 
 const fn spec(name: &'static str, action: Action, resolution: ProjectResolution) -> MethodSpec {
-    MethodSpec { name, action, resolution }
+    MethodSpec {
+        name,
+        action,
+        resolution,
+    }
 }
 
 /// Looks up what a method requires. `None` means the method is unknown, which
@@ -531,7 +615,10 @@ mod tests {
             methods::CREATE_PROJECT,
         ];
         for name in names {
-            assert!(lookup_method(name).is_some(), "{name} missing from METHOD_TABLE");
+            assert!(
+                lookup_method(name).is_some(),
+                "{name} missing from METHOD_TABLE"
+            );
         }
         assert_eq!(METHOD_TABLE.len(), names.len());
     }
@@ -546,14 +633,35 @@ mod tests {
 
     #[test]
     fn actions_match_the_auth_design_doc() {
-        assert_eq!(lookup_method(methods::CREATE_DEPLOYMENT).unwrap().action, Action::Deploy);
-        assert_eq!(lookup_method(methods::ACTIVATE_DEPLOYMENT).unwrap().action, Action::Deploy);
-        assert_eq!(lookup_method(methods::LIST_DEPLOYMENTS).unwrap().action, Action::Read);
-        assert_eq!(lookup_method(methods::DOWNLOAD_FILE).unwrap().action, Action::Read);
-        assert_eq!(lookup_method(methods::LIST_DATABASES).unwrap().action, Action::Read);
+        assert_eq!(
+            lookup_method(methods::CREATE_DEPLOYMENT).unwrap().action,
+            Action::Deploy
+        );
+        assert_eq!(
+            lookup_method(methods::ACTIVATE_DEPLOYMENT).unwrap().action,
+            Action::Deploy
+        );
+        assert_eq!(
+            lookup_method(methods::LIST_DEPLOYMENTS).unwrap().action,
+            Action::Read
+        );
+        assert_eq!(
+            lookup_method(methods::DOWNLOAD_FILE).unwrap().action,
+            Action::Read
+        );
+        assert_eq!(
+            lookup_method(methods::LIST_DATABASES).unwrap().action,
+            Action::Read
+        );
         // A deploy key must not reach SQL or rollback.
-        assert_eq!(lookup_method(methods::EXECUTE_SQL).unwrap().action, Action::Sql);
-        assert_eq!(lookup_method(methods::ROLLBACK).unwrap().action, Action::Rollback);
+        assert_eq!(
+            lookup_method(methods::EXECUTE_SQL).unwrap().action,
+            Action::Sql
+        );
+        assert_eq!(
+            lookup_method(methods::ROLLBACK).unwrap().action,
+            Action::Rollback
+        );
         assert_eq!(
             lookup_method(methods::CREATE_PROJECT).unwrap().action,
             Action::CreateProject
@@ -567,7 +675,9 @@ mod tests {
             ProjectResolution::ByDeployName
         );
         assert_eq!(
-            lookup_method(methods::PREVIEW_BY_DEPLOY_NAME).unwrap().resolution,
+            lookup_method(methods::PREVIEW_BY_DEPLOY_NAME)
+                .unwrap()
+                .resolution,
             ProjectResolution::ByDeployName
         );
         assert_eq!(
@@ -592,7 +702,10 @@ mod tests {
             scope_string("hotlaps-staging", Action::Deploy),
             "deploy:hotlaps-staging:deploy"
         );
-        assert_eq!(scope_string("hotlaps-prod", Action::Read), "deploy:hotlaps-prod:read");
+        assert_eq!(
+            scope_string("hotlaps-prod", Action::Read),
+            "deploy:hotlaps-prod:read"
+        );
         assert_eq!(
             scope_string("deploy-do2", Action::CreateProject),
             "deploy:deploy-do2:create-project"

@@ -788,3 +788,57 @@ fn the_server_refuses_to_start_without_its_auth_configuration() {
         );
     }
 }
+
+/// The sibling of the test above: `--disable-api-key-check` bypasses
+/// authorization entirely, so a local development server started with it does
+/// not also have to carry a full auth-center configuration. The bypass is
+/// explicit in that flag, never a consequence of configuration having gone
+/// missing — which is the property the test above pins down.
+#[test]
+fn a_local_server_with_the_key_check_disabled_needs_no_auth_configuration() {
+    let root = TempRoot::new("bypass-unconfigured");
+    let state_dir = root.mkdir("state");
+    let deployments_dir = root.mkdir("deployments");
+
+    let mut setup = std::process::Command::new(server_binary());
+    setup.env("DEPLOY_STATE_DIR", &state_dir);
+    setup.env_remove("XDG_STATE_HOME");
+    let status = setup
+        .arg("set-deployments-dir")
+        .arg(&deployments_dir)
+        .status()
+        .expect("could not run set-deployments-dir");
+    assert!(status.success());
+
+    let mut command = std::process::Command::new(server_binary());
+    command.env("DEPLOY_STATE_DIR", &state_dir);
+    command.env_remove("XDG_STATE_HOME");
+    for name in [
+        "DEPLOY_AUTH_URL",
+        "DEPLOY_AUTH_KEY",
+        "DEPLOY_ADMIN_RESOURCE",
+    ] {
+        command.env_remove(name);
+    }
+
+    let mut child = command
+        .arg("serve")
+        .arg("--port")
+        .arg("0")
+        .arg("--disable-api-key-check")
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("could not run deploy-server serve");
+
+    // It should still be running a moment later, rather than having exited with
+    // the "refusing to start" error.
+    std::thread::sleep(std::time::Duration::from_millis(750));
+    let exited = child.try_wait().expect("could not poll the server");
+    let _ = child.kill();
+    let _ = child.wait();
+
+    assert!(
+        exited.is_none(),
+        "serve --disable-api-key-check exited instead of starting: {exited:?}"
+    );
+}

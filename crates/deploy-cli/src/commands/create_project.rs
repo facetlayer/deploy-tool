@@ -20,9 +20,8 @@ pub fn create_project(
 ) -> Result<()> {
     // There is no config file for this command — the project does not exist
     // yet — so the destination has to be given explicitly.
-    let dest_url = dest_url.ok_or_else(|| {
-        anyhow!("create-project needs a destination: pass --override-dest <url>")
-    })?;
+    let dest_url = dest_url
+        .ok_or_else(|| anyhow!("create-project needs a destination: pass --override-dest <url>"))?;
 
     let mut client = RpcClient::new(dest_url);
     match find_api_key(None) {

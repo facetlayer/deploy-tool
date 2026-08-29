@@ -50,18 +50,18 @@ enum PathPattern {
 
 /// Matched against the full relative path *and* the basename, per the JS.
 const DISALLOWED_PATH_PATTERNS: &[PathPattern] = &[
-    PathPattern::Contains(".env."),      // .env.anything
-    PathPattern::EndsWith(".pem"),       // any .pem file
-    PathPattern::EndsWith(".key"),       // any .key file
-    PathPattern::EndsWith(".p12"),       // any .p12 file
-    PathPattern::EndsWith(".pfx"),       // any .pfx file
-    PathPattern::EndsWith("_rsa"),       // SSH keys
-    PathPattern::EndsWith("_ed25519"),   // SSH keys
-    PathPattern::StartsWith(".git/"),    // .git directory contents
-    PathPattern::StartsWith(".ssh/"),    // .ssh directory contents
-    PathPattern::StartsWith(".aws/"),    // AWS config directory
-    PathPattern::StartsWith(".gcp/"),    // Google Cloud config
-    PathPattern::StartsWith(".azure/"),  // Azure config
+    PathPattern::Contains(".env."),     // .env.anything
+    PathPattern::EndsWith(".pem"),      // any .pem file
+    PathPattern::EndsWith(".key"),      // any .key file
+    PathPattern::EndsWith(".p12"),      // any .p12 file
+    PathPattern::EndsWith(".pfx"),      // any .pfx file
+    PathPattern::EndsWith("_rsa"),      // SSH keys
+    PathPattern::EndsWith("_ed25519"),  // SSH keys
+    PathPattern::StartsWith(".git/"),   // .git directory contents
+    PathPattern::StartsWith(".ssh/"),   // .ssh directory contents
+    PathPattern::StartsWith(".aws/"),   // AWS config directory
+    PathPattern::StartsWith(".gcp/"),   // Google Cloud config
+    PathPattern::StartsWith(".azure/"), // Azure config
 ];
 
 /// Keywords matched (case-insensitively) against the basename only. Matching
@@ -163,7 +163,11 @@ mod tests {
 
     fn assert_blocked(files: &[&str]) {
         let err = check(files).unwrap_err().to_string();
-        assert!(err.contains("Security Error"), "expected a block: {:?}", files);
+        assert!(
+            err.contains("Security Error"),
+            "expected a block: {:?}",
+            files
+        );
     }
 
     // --- Exact file matches ---
@@ -302,7 +306,9 @@ mod tests {
 
     #[test]
     fn error_message_lists_every_dangerous_file() {
-        let err = check(&[".env", "id_rsa", "index.js"]).unwrap_err().to_string();
+        let err = check(&[".env", "id_rsa", "index.js"])
+            .unwrap_err()
+            .to_string();
         assert!(err.contains(".env"));
         assert!(err.contains("id_rsa"));
         assert!(!err.contains("index.js"));

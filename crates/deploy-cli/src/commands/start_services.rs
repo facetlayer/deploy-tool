@@ -40,7 +40,10 @@ fn state_directory() -> PathBuf {
         }
     }
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".local").join("state").join("deploy")
+    PathBuf::from(home)
+        .join(".local")
+        .join("state")
+        .join("deploy")
 }
 
 /// Opens the server database read-only: this is a client process, and it must
@@ -147,7 +150,10 @@ pub fn start_services() -> Result<()> {
                 eprintln!(
                     "{}: candle check-start exited {}",
                     service.project_name,
-                    status.code().map(|c| c.to_string()).unwrap_or_else(|| "on a signal".to_string())
+                    status
+                        .code()
+                        .map(|c| c.to_string())
+                        .unwrap_or_else(|| "on a signal".to_string())
                 );
                 failures += 1;
             }
@@ -177,7 +183,10 @@ pub fn preview_start_services() -> Result<()> {
     println!();
 
     for service in &services {
-        println!("[{}] (deploy: {})", service.project_name, service.deploy_name);
+        println!(
+            "[{}] (deploy: {})",
+            service.project_name, service.deploy_name
+        );
         println!("  cwd: {}", service.deploy_dir.display());
         println!("  candle-config: {}", service.candle_config_path);
         println!("  $ {}", service.command);

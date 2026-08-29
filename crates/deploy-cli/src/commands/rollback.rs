@@ -81,7 +81,11 @@ fn choose_deployment(project_name: &str, deployments: &[DeploymentInfo]) -> Resu
     println!();
 
     for (index, deployment) in deployments.iter().enumerate() {
-        let active_marker = if deployment.is_active { " (active)" } else { "" };
+        let active_marker = if deployment.is_active {
+            " (active)"
+        } else {
+            ""
+        };
         println!(
             "  {}. {}  [{}]{active_marker}",
             index + 1,

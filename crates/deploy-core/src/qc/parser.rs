@@ -107,12 +107,7 @@ struct TagContext {
 }
 
 fn parse_tag_list_from_tokens(it: &mut TokenIterator) -> TagList {
-    let query = parse_query_from_tokens(
-        it,
-        ParseContext {
-            inside_paren: true,
-        },
-    );
+    let query = parse_query_from_tokens(it, ParseContext { inside_paren: true });
 
     match query {
         None => TagList::default(),
@@ -225,7 +220,10 @@ fn parse_tags(it: &mut TokenIterator, ctx: &TagContext) -> Vec<Tag> {
     let mut tags = Vec::new();
 
     loop {
-        if it.try_consume(Tok::Space) || it.try_consume(Tok::Newline) || it.try_consume(Tok::LineComment) {
+        if it.try_consume(Tok::Space)
+            || it.try_consume(Tok::Newline)
+            || it.try_consume(Tok::LineComment)
+        {
             continue;
         }
 
@@ -244,7 +242,8 @@ fn parse_tags(it: &mut TokenIterator, ctx: &TagContext) -> Vec<Tag> {
         let is_on_following_line = peeked.line_start != ctx.starting_line;
         let indent_is_same_or_lower = peeked.leading_indent <= ctx.starting_indent;
 
-        if !ctx.inside_paren && !tags.is_empty() && is_on_following_line && indent_is_same_or_lower {
+        if !ctx.inside_paren && !tags.is_empty() && is_on_following_line && indent_is_same_or_lower
+        {
             break;
         }
 

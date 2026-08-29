@@ -84,7 +84,10 @@ mod tests {
     #[test]
     fn returns_none_for_non_existent_file() {
         let dir = temp_dir("missing");
-        assert_eq!(get_file_hash(&dir.join("does-not-exist.txt")).unwrap(), None);
+        assert_eq!(
+            get_file_hash(&dir.join("does-not-exist.txt")).unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -127,9 +130,6 @@ mod tests {
         let content = vec![0xabu8; READ_BUFFER_SIZE * 3 + 17];
         fs::write(&path, &content).unwrap();
 
-        assert_eq!(
-            get_file_hash(&path).unwrap().unwrap(),
-            sha256_hex(&content)
-        );
+        assert_eq!(get_file_hash(&path).unwrap().unwrap(), sha256_hex(&content));
     }
 }

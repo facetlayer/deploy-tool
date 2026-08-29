@@ -102,11 +102,16 @@ derivation from the hostname — an instance that forgets to set this refuses
 
 All live in the instance's `EnvironmentFile` (`/root/secrets/deploy.env`),
 `0600` root-owned — not in the unit file. The server refuses to start if any of
-the three is missing, rather than starting in a half-configured state.
+the three is missing, rather than starting in a half-configured state, and it
+names the missing one.
 
 `--disable-api-key-check` still exists for local development and for the test
-suite. It is not a migration path and must never be set on do2 or dohl; the
-server logs a prominent warning at startup when it is on.
+suite, and a server started with it needs no auth-center configuration at all —
+it never introspects anything, so requiring the three variables would be
+friction with no security value. The bypass is explicit in that flag and is
+never a consequence of configuration having gone missing, which is the property
+the refusal above protects. It is not a migration path and must never be set on
+do2 or dohl; the server logs a prominent warning at startup when it is on.
 
 ## Authorization flow (R2)
 
@@ -116,7 +121,7 @@ Every RPC, in order:
    directly. Methods carrying only `deployName` join
    `deployment.deploy_name → deployment.project_name`. `createProject` resolves
    to the instance administration resource instead.
-2. **Look up the project's bound resource** (`project.resource_name`).
+2. **Look up the project's bound resource** (`project_resource_binding`).
 3. **Introspect** the presented key against `deploy:<resource>:<action>`.
 4. **Deny on any failure** — unknown deploy name, unregistered project, project
    with no bound resource, key lacking the action.
@@ -167,8 +172,8 @@ table with its own history, rather than as a column on `project`:
 ## Attribution (R7)
 
 `deployment.authorized_by_key_id` and `authorized_by_key_name` record the
-auth-center key that authorized the deployment (or `legacy:<id>` for a local
-key). `deploy history` surfaces it.
+auth-center key that authorized the deployment. `deploy history` surfaces it.
+Every key is an auth-center key, so there is no second attribution form.
 
 ## Known gap — resource existence is not verified at registration
 

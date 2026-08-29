@@ -59,9 +59,11 @@ pub fn preview(config_file: &Path, override_dest: Option<&str>) -> Result<()> {
 
         send_manifest_batches(&setup.client, &created.deploy_name, &manifest)?;
 
-        setup.client.preview_by_deploy_name(&PreviewByDeployNameParams {
-            deploy_name: created.deploy_name,
-        })?
+        setup
+            .client
+            .preview_by_deploy_name(&PreviewByDeployNameParams {
+                deploy_name: created.deploy_name,
+            })?
     } else {
         setup.client.preview_deployment(&PreviewDeploymentParams {
             project_name: setup.project_name.clone(),
@@ -82,7 +84,10 @@ pub fn preview(config_file: &Path, override_dest: Option<&str>) -> Result<()> {
         }
 
         if !result.files_to_delete.is_empty() {
-            println!("Server files to be deleted ({}):", result.files_to_delete.len());
+            println!(
+                "Server files to be deleted ({}):",
+                result.files_to_delete.len()
+            );
             for file in &result.files_to_delete {
                 println!("  - {file}");
             }

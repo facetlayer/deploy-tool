@@ -100,8 +100,15 @@ fn print_auth_summary(config: &AuthCenterConfig, disable_api_key_check: bool) {
 fn serve(disable_api_key_check: bool, port: u16) -> Result<()> {
     // All three variables are required (R6): with no local key table, an
     // instance missing any of them cannot authenticate anyone, so refuse to
-    // start rather than come up half-configured.
-    let config = AuthCenterConfig::from_env()?;
+    // start rather than come up half-configured. The one exception is a local
+    // server started with --disable-api-key-check, which never introspects
+    // anything; the bypass there is explicit in authz, never a consequence of
+    // configuration having gone missing.
+    let config = match AuthCenterConfig::from_env() {
+        Ok(config) => config,
+        Err(_) if disable_api_key_check => AuthCenterConfig::unusable(),
+        Err(error) => return Err(error),
+    };
     print_auth_summary(&config, disable_api_key_check);
     auth_center::install(AuthCenter::new(config));
 

@@ -15,5 +15,10 @@ pub fn run_shell_command(command: &str, cwd: &Path) -> Result<ExitStatus> {
         .arg(command)
         .current_dir(cwd)
         .status()
-        .with_context(|| format!("Failed to run shell command in {}: {command}", cwd.display()))
+        .with_context(|| {
+            format!(
+                "Failed to run shell command in {}: {command}",
+                cwd.display()
+            )
+        })
 }

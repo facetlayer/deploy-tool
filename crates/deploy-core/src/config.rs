@@ -537,9 +537,12 @@ preserve-existing-files-max-age 7d
     #[test]
     fn local_dir_moves_the_root_up_out_of_the_config_directory() {
         let settings = parse_client_settings(HOTLAPS_STAGING);
-        let resolved =
-            resolve_local_dir(Path::new("/home/andy/biz/hotlaps/deploy/api-staging.qc"), &settings, None)
-                .unwrap();
+        let resolved = resolve_local_dir(
+            Path::new("/home/andy/biz/hotlaps/deploy/api-staging.qc"),
+            &settings,
+            None,
+        )
+        .unwrap();
         assert_eq!(resolved, PathBuf::from("/home/andy/biz/hotlaps"));
     }
 

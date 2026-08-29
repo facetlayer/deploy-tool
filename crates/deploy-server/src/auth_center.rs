@@ -107,6 +107,20 @@ impl AuthCenterConfig {
             admin_resource,
         })
     }
+
+    /// A configuration that can never authorize anything, for a local server
+    /// started with `--disable-api-key-check`. That flag bypasses authorization
+    /// entirely, so demanding a full auth-center setup to run one is friction
+    /// with no security value. The base URL points at a port nothing listens
+    /// on: if this config is ever consulted, it fails closed rather than
+    /// allowing (R4).
+    pub fn unusable() -> AuthCenterConfig {
+        AuthCenterConfig {
+            base_url: "http://127.0.0.1:1".to_string(),
+            service_key: String::new(),
+            admin_resource: String::new(),
+        }
+    }
 }
 
 fn missing(name: &str) -> anyhow::Error {

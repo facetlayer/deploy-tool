@@ -14,11 +14,58 @@ const TABLE_PRECEDING_KEYWORDS: &[&str] = &["from", "join", "into", "update", "t
 
 /// SQL keywords that are never table names.
 const SQL_KEYWORDS: &[&str] = &[
-    "select", "from", "where", "join", "inner", "outer", "left", "right", "cross", "full", "on",
-    "as", "and", "or", "not", "in", "is", "null", "like", "between", "case", "when", "then",
-    "else", "end", "having", "group", "by", "order", "limit", "offset", "distinct", "all",
-    "exists", "set", "values", "returning", "with", "recursive", "insert", "delete", "create",
-    "drop", "alter", "if", "replace", "ignore", "rollback", "abort", "fail", "union", "intersect",
+    "select",
+    "from",
+    "where",
+    "join",
+    "inner",
+    "outer",
+    "left",
+    "right",
+    "cross",
+    "full",
+    "on",
+    "as",
+    "and",
+    "or",
+    "not",
+    "in",
+    "is",
+    "null",
+    "like",
+    "between",
+    "case",
+    "when",
+    "then",
+    "else",
+    "end",
+    "having",
+    "group",
+    "by",
+    "order",
+    "limit",
+    "offset",
+    "distinct",
+    "all",
+    "exists",
+    "set",
+    "values",
+    "returning",
+    "with",
+    "recursive",
+    "insert",
+    "delete",
+    "create",
+    "drop",
+    "alter",
+    "if",
+    "replace",
+    "ignore",
+    "rollback",
+    "abort",
+    "fail",
+    "union",
+    "intersect",
     "except",
 ];
 
@@ -206,7 +253,10 @@ mod tests {
 
     #[test]
     fn insert_into() {
-        assert_eq!(names("INSERT INTO users (name) VALUES ('a')"), vec!["users"]);
+        assert_eq!(
+            names("INSERT INTO users (name) VALUES ('a')"),
+            vec!["users"]
+        );
         assert_eq!(
             names("INSERT OR IGNORE INTO sessions (id) VALUES (1)"),
             vec!["sessions"]
@@ -215,7 +265,10 @@ mod tests {
 
     #[test]
     fn update_and_delete() {
-        assert_eq!(names("UPDATE users SET name = 'a' WHERE id = 1"), vec!["users"]);
+        assert_eq!(
+            names("UPDATE users SET name = 'a' WHERE id = 1"),
+            vec!["users"]
+        );
         assert_eq!(names("DELETE FROM sessions WHERE id = 1"), vec!["sessions"]);
     }
 
@@ -232,7 +285,10 @@ mod tests {
 
     #[test]
     fn alter_table() {
-        assert_eq!(names("ALTER TABLE users ADD COLUMN age INTEGER"), vec!["users"]);
+        assert_eq!(
+            names("ALTER TABLE users ADD COLUMN age INTEGER"),
+            vec!["users"]
+        );
     }
 
     #[test]
@@ -259,7 +315,10 @@ mod tests {
             names("/* from commented_out */ SELECT * FROM users"),
             vec!["users"]
         );
-        assert_eq!(names("# from commented_out\nSELECT * FROM users"), vec!["users"]);
+        assert_eq!(
+            names("# from commented_out\nSELECT * FROM users"),
+            vec!["users"]
+        );
     }
 
     #[test]

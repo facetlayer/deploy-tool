@@ -35,9 +35,7 @@ pub struct RpcClient {
 impl RpcClient {
     pub fn new(dest_url: &str) -> RpcClient {
         RpcClient {
-            agent: ureq::AgentBuilder::new()
-                .timeout(REQUEST_TIMEOUT)
-                .build(),
+            agent: ureq::AgentBuilder::new().timeout(REQUEST_TIMEOUT).build(),
             http_url: json_rpc_url(dest_url),
             api_key: None,
             next_id: Arc::new(AtomicI64::new(1)),
@@ -107,8 +105,9 @@ impl RpcClient {
                 );
             }
             Err(err) => {
-                return Err(anyhow!(err))
-                    .with_context(|| format!("JSON-RPC {method}: request to {} failed", self.http_url))
+                return Err(anyhow!(err)).with_context(|| {
+                    format!("JSON-RPC {method}: request to {} failed", self.http_url)
+                })
             }
         };
 
@@ -131,7 +130,10 @@ impl RpcClient {
                 .and_then(Value::as_str)
                 .unwrap_or("unknown error");
             let code = error.get("code").and_then(Value::as_i64);
-            let data = error.get("data").map(|d| format!(" ({d})")).unwrap_or_default();
+            let data = error
+                .get("data")
+                .map(|d| format!(" ({d})"))
+                .unwrap_or_default();
             bail!(
                 "JSON-RPC {method} failed{}: {message}{data}",
                 code.map(|c| format!(" (code {c})")).unwrap_or_default()
@@ -221,7 +223,10 @@ impl RpcClient {
         self.call(methods::LIST_DATABASES, params)
     }
 
-    pub fn list_deployments(&self, params: &ListDeploymentsParams) -> Result<ListDeploymentsResult> {
+    pub fn list_deployments(
+        &self,
+        params: &ListDeploymentsParams,
+    ) -> Result<ListDeploymentsResult> {
         self.call(methods::LIST_DEPLOYMENTS, params)
     }
 
@@ -260,8 +265,14 @@ mod tests {
 
     #[test]
     fn appends_the_endpoint_path() {
-        assert_eq!(json_rpc_url("https://do2.example"), "https://do2.example/json-rpc");
-        assert_eq!(json_rpc_url("https://do2.example/"), "https://do2.example/json-rpc");
+        assert_eq!(
+            json_rpc_url("https://do2.example"),
+            "https://do2.example/json-rpc"
+        );
+        assert_eq!(
+            json_rpc_url("https://do2.example/"),
+            "https://do2.example/json-rpc"
+        );
     }
 
     #[test]

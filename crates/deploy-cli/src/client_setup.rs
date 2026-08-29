@@ -67,9 +67,9 @@ pub fn setup_client(config_file: &Path, override_dest: Option<&str>) -> Result<C
         Some(api_key) => client.set_api_key(api_key),
         None => {
             let sources = match &settings.secrets_file {
-                Some(file) => format!(
-                    "{file}, DEPLOY_API_KEY environment variable, or ~/secrets/deploy.env"
-                ),
+                Some(file) => {
+                    format!("{file}, DEPLOY_API_KEY environment variable, or ~/secrets/deploy.env")
+                }
                 None => "DEPLOY_API_KEY environment variable or ~/secrets/deploy.env".to_string(),
             };
             eprintln!("No API key found in {sources}");
@@ -110,7 +110,10 @@ pub fn source_manifest(files: &FileList) -> Result<Vec<FileEntry>> {
             .ok_or_else(|| {
                 // The walk found it moments ago, so a missing file here means
                 // something is rewriting the tree mid-deploy.
-                anyhow!("File disappeared while building the manifest: {}", file.source_path.display())
+                anyhow!(
+                    "File disappeared while building the manifest: {}",
+                    file.source_path.display()
+                )
             })?;
 
         manifest.push(FileEntry {
