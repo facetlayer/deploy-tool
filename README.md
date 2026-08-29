@@ -16,16 +16,34 @@ and a Rust daemon. Everything here is Rust, in one workspace:
 Why the rewrite, and what it changes, is in
 [docs/project-goals.md](docs/project-goals.md).
 
-## New: `create-project` is a required first step
+## Setup, in order
+
+An instance is not usable until all four of these are done, and skipping step 3
+means every deploy of that project is denied.
+
+1. **Deployments directory** — `deploy-server set-deployments-dir /root/deploys`
+   on the host. The path lives in the server's database, not the environment.
+2. **auth-center configuration** — `DEPLOY_AUTH_URL`, `DEPLOY_AUTH_KEY` and
+   `DEPLOY_ADMIN_RESOURCE` in the instance's environment file. All three are
+   required; the server refuses to start without them.
+3. **Register each project**, binding it to an auth-center resource:
+
+   ```bash
+   deploy create-project my-app --resource my-app-staging --override-dest https://apf1.dev
+   ```
+
+4. **Deploy** — `deploy run my-app.qc`.
+
+Steps 1 and 2 are per instance ([docs/server-setup.md](docs/server-setup.md));
+steps 3 and 4 are per project ([docs/getting-started.md](docs/getting-started.md)).
+
+## `create-project` is a required first step
 
 In the old tool a project came into existence implicitly on its first
 successful deploy. It does not any more. A project must be registered on the
 target instance and bound to an [auth-center](docs/auth-integration.md)
-resource before anything can be deployed to it:
-
-```bash
-deploy create-project my-app --resource my-app-staging --override-dest https://apf1.dev
-```
+resource before anything can be deployed to it. A deploy to an unregistered or
+unbound project is refused — there is no fallback and no implicit create.
 
 The resource binding lives in that instance's own database and is never
 supplied by a client. That is what lets the same project name — `hotlaps-api`,
@@ -34,11 +52,6 @@ key presented to production is denied.
 
 Registering requires a key holding `deploy:<admin-resource>:create-project` on
 the instance (see [docs/auth-integration.md](docs/auth-integration.md), D2).
-
-One transition detail: an instance with `DEPLOY_AUTH_URL` unset is legacy-only
-and still accepts a deploy to an unregistered project, so the resource model
-can be landed before any keys move. Once auth-center is configured on an
-instance, deploying to an unregistered (or unbound) project is refused.
 
 ## Install
 
@@ -55,8 +68,8 @@ For the droplets, cross-compile a Linux binary with
 and have no Rust toolchain. Standing up an instance is
 [docs/server-setup.md](docs/server-setup.md).
 
-On the client, put the API key in `~/secrets/deploy.env` as `DEPLOY_API_KEY=…`,
-or in the environment variable of the same name.
+On the client, put the auth-center key in `~/secrets/deploy.env` as
+`DEPLOY_API_KEY=…`, or in the environment variable of the same name.
 
 ## CLI commands
 
@@ -78,7 +91,8 @@ Every command that talks to a server takes `--override-dest <url>` to override
 the config's `dest-url`.
 
 Server-side commands are in [docs/server-setup.md](docs/server-setup.md):
-`deploy-server serve`, `set-deployments-dir`, `create-key`, `list-legacy-keys`.
+`deploy-server serve` and `set-deployments-dir`. There is no key-management
+subcommand — keys live in auth-center, and the server has no local key table.
 
 ## A minimal config
 

@@ -4,9 +4,23 @@ Walking a new project from nothing to a deployed service. Assumes a
 `deploy-server` instance already exists; standing one up is
 [server-setup.md](server-setup.md).
 
-If you have used the old tool: the one new step is
-[step 3](#3-register-the-project), `deploy create-project`. Projects are no
-longer created implicitly by the first deploy.
+If you have used the old tool, read [step 3](#3-register-the-project) first.
+`deploy create-project` is new and is not optional: projects are no longer
+created implicitly by the first deploy, and every call for an unregistered or
+unbound project is denied. There is no legacy key path and no fallback that
+lets a deploy through without it.
+
+The whole sequence, once a server exists:
+
+1. Set the instance's deployments directory (`set-deployments-dir`).
+2. Configure `DEPLOY_AUTH_URL`, `DEPLOY_AUTH_KEY` and `DEPLOY_ADMIN_RESOURCE`
+   on the instance; it will not start without all three.
+3. `deploy create-project <name> --resource <resource>`.
+4. `deploy run <config>.qc`.
+
+Steps 1 and 2 are done once per instance and are in
+[server-setup.md](server-setup.md). Steps 3 and 4 are per project and are what
+the rest of this page walks through.
 
 ## Model
 
@@ -24,6 +38,11 @@ cargo build --release        # target/release/deploy
 Put it on your `PATH`.
 
 ## 2. Set up the client's key
+
+Keys are issued in auth-center; the server has no local key table. A key is a
+set of `deploy:<resource>:<action>` grants — see
+[auth-integration.md](auth-integration.md) for the format, and for which action
+each command needs.
 
 The CLI looks for a key in this order:
 
@@ -56,9 +75,15 @@ Every later call for this project is checked against
 and is never taken from a client, which is what lets the same project name
 require different resources on staging and production hosts.
 
+Skipping this step is the failure most likely to catch out someone used to the
+old tool: without a binding there is no resource to check a key against, so
+`deploy run` is refused with "Project '<name>' is not registered on this
+server", and read-only commands answer HTTP 401.
+
 There is no config file yet, so the destination has to be given with
 `--override-dest`. Registering requires a key holding
-`deploy:<instance-admin-resource>:create-project`.
+`deploy:<instance-admin-resource>:create-project`, which is a different key from
+the one that deploys.
 
 The command prints the scope strings keys for this project must hold. It also
 warns that it could not verify the resource exists — auth-center has no
@@ -67,7 +92,8 @@ would show up later as every deploy being denied. Check the spelling against
 the dashboard.
 
 Re-running with the same resource is a no-op. Pointing an already-bound project
-at a different resource requires `--rebind`.
+at a different resource requires `--rebind`, and is recorded in the instance's
+binding history.
 
 ## 4. Write the config
 

@@ -5,10 +5,12 @@ database, and the JSON-RPC endpoint the CLI talks to.
 
 The existing droplets (do2, dohl) run the **old** server today: unit `deploy`,
 port 4715, deployments at `/root/deploys`, database at
-`/root/.local/state/deploy/db.sqlite`. This server opens that same database in
-place — the schema is inherited and new columns are added by migration — so
-replacing the binary keeps every project, deployment and active-deployment row.
-Take a copy of the database before the first swap anyway.
+`/root/.local/state/deploy/db.sqlite`. This server does **not** inherit that
+database's schema. Compatibility with it is not a requirement, the local
+`secret_key` table is gone, and the resource binding lives in tables the old
+schema does not have — so cutting an instance over means rebuilding or
+importing the database, not swapping the binary in place. That is
+[§7](#7-cutover) and it is the part to plan.
 
 ## 1. Build and install the binary
 
@@ -38,8 +40,8 @@ mkdir -p /root/deploys
 /root/bin/deploy-server set-deployments-dir /root/deploys
 ```
 
-On do2 and dohl this is already set and should be left alone. The server
-refuses to serve deployments until it is configured.
+The server refuses to serve deployments until it is configured. Rebuilding the
+database clears this setting too, so it is part of the cutover checklist.
 
 ## 3. Database location
 
@@ -52,31 +54,38 @@ refuses to serve deployments until it is configured.
 
 Running as root with none of those set gives
 `/root/.local/state/deploy/db.sqlite`, which is where the existing instances'
-data already is. The directory is created if missing; the schema is created or
-migrated on open (WAL journal, 5 s busy timeout).
+data already is. The directory is created if missing; the schema is created on
+open (WAL journal, 5 s busy timeout). There are no in-place migrations from the
+old schema.
 
 `deploy start-services`, which runs on the host, resolves the same three
 variables and opens that database **read-only**.
 
 ## 4. auth-center configuration
 
-All of these live in the instance's `EnvironmentFile`
-(`/root/secrets/deploy.env`, `0600`, root-owned), never in the unit file.
-Template: [`install/deploy.env.template`](../install/deploy.env.template).
+Three variables, all required. There is no local key table any more, so an
+instance missing any of them cannot authenticate anyone; the server prints
+which one is missing and exits rather than starting half-configured.
+
+They live in the instance's `EnvironmentFile` (`/root/secrets/deploy.env`,
+`0600`, root-owned), never in the unit file. Template:
+[`install/deploy.env.template`](../install/deploy.env.template).
 
 | Variable | Meaning |
 |---|---|
-| `DEPLOY_AUTH_URL` | auth-center base URL, e.g. `https://auth.apf1.dev`. Never hardcoded. Unset or empty ⇒ legacy-only: no network calls, and the resource model is not enforced. |
+| `DEPLOY_AUTH_URL` | auth-center base URL, e.g. `https://auth.apf1.dev`. Never hardcoded; each instance gets its own. |
 | `DEPLOY_AUTH_KEY` | This instance's own auth-center service key, holding `auth:introspect`. Each instance gets its own so they can be revoked independently. |
-| `DEPLOY_ADMIN_RESOURCE` | This instance's administration resource, e.g. `deploy-do2`. Required whenever `DEPLOY_AUTH_URL` is set; it is what `createProject` is checked against. No default and no derivation from the hostname. |
-| `DEPLOY_DISABLE_LEGACY_KEYS` | `1` turns off the local `secret_key` table on an instance whose keys have all migrated. |
-| `DEPLOY_STATE_DIR` | Optional override of the state directory (above). |
+| `DEPLOY_ADMIN_RESOURCE` | This instance's administration resource, e.g. `deploy-do2`. It is what `createProject` is checked against. No default and no derivation from the hostname. |
 
-The server refuses to start half-configured — e.g. `DEPLOY_AUTH_URL` with no
-`DEPLOY_ADMIN_RESOURCE` — rather than silently falling back to legacy-only. At
-startup it prints an authorization summary (auth-center URL, admin resource,
-whether legacy keys are enabled, and warnings for the dangerous combinations)
-so the journal shows what a running instance is actually doing.
+`DEPLOY_STATE_DIR` is the one optional variable (§3).
+
+At startup the server prints an authorization summary — auth-center URL, admin
+resource, and a boxed warning if `--disable-api-key-check` is set — so the
+journal shows what a running instance is actually doing.
+
+`--disable-api-key-check` accepts every call from anyone with no key at all. It
+exists for local development and the test suite. It is not a migration path and
+must never be set on do2 or dohl.
 
 The authorization model itself — the `deploy:<resource>:<action>` scope format,
 the action table, caching, and what happens when auth-center is unreachable —
@@ -104,73 +113,95 @@ ssh root@host 'systemd-analyze verify /etc/systemd/system/deploy-server.service 
 `deploy` unit on 4715, stop and disable that unit first — two processes cannot
 hold the port, and both would write the same database.
 
+With `Restart=always`, a missing environment variable shows up as a unit that
+restarts in a loop; `journalctl -u deploy-server` names the variable.
+
 Note the binary currently binds `0.0.0.0`, inherited from the old server. That
 is against the do2 convention of binding `127.0.0.1` behind nginx, and there is
 no flag to change it yet; on a droplet with no general firewall the port is
-reachable directly. Keep that in mind when picking a port and when deciding
-whether the instance can accept legacy keys.
+reachable directly. Keep that in mind when picking a port.
 
-## 6. Mint a first key
+## 6. Keys and project registration
 
-Two kinds of key exist during migration.
-
-**A legacy key** — local to the instance, no auth-center involved, grants
-everything on it:
-
-```bash
-/root/bin/deploy-server create-key      # prints the key once
-```
-
-Put it on the client in `~/secrets/deploy.env` as `DEPLOY_API_KEY=…` (or in the
-environment variable of the same name). This is the right key for step 1 of the
-rollout, and for bootstrapping an instance before auth-center is configured.
-
-**An auth-center key** — minted in the auth-center dashboard, granted the exact
-scope strings from [auth-integration.md](auth-integration.md):
+Every key comes from the auth-center dashboard, granted the exact scope strings
+from [auth-integration.md](auth-integration.md):
 
 - `deploy:deploy-do2:create-project` — to register projects on do2.
 - `deploy:<resource>:deploy` — a CI key that ships to one resource.
 - `deploy:<resource>:read` — an on-call key that can only look.
 - `deploy:<resource>:*` — everything on one resource, including `sql`.
 
-Once a key exists, register the projects on the instance:
+There is no `deploy-server create-key` and no local key table; a key cannot be
+minted on the host.
+
+With an admin key in hand, register every project on the instance:
 
 ```bash
 deploy create-project hotlaps-api --resource hotlaps-staging --override-dest https://apf1.dev
 ```
 
-Projects carried over from the old tool exist with no binding; running
-`create-project` against them binds them (reported as `rebound`) and needs no
-`--rebind` flag. Repointing an already-bound project does need `--rebind`.
+Until a project is registered and bound, every call naming it is denied —
+including reads. Repointing an already-bound project at a different resource
+needs `--rebind` and is written to the instance's binding history.
 
-Auditing what is left:
+## 7. Cutover
 
-```bash
-/root/bin/deploy-server list-legacy-keys
-```
+There is no legacy fallback, so enabling this on an instance is a cutover, not
+a gradual migration. From the Rollout section of the auth-center requirements,
+per instance:
 
-Prints id, label, created-at and last-used for each local key, and never the
-key text. When it reports none remain, the instance can set
-`DEPLOY_DISABLE_LEGACY_KEYS=1`.
+1. Land the resource model and the resolution path.
+2. Create the resources and issue keys in auth-center, including this
+   instance's own `auth:introspect` service key.
+3. Register every project against its resource, and distribute the new keys to
+   every caller that needs one — CI secrets, `~/secrets/deploy.env`, and so on.
+   Do this **before** the cutover. A caller holding no valid key at cutover
+   simply stops being able to deploy, and this is the step most likely to be
+   left incompletely done.
+4. Cut over: rebuild or import the database (below), write the three variables
+   into `/root/secrets/deploy.env`, restart.
+5. Verify with a real deploy of a low-stakes project before relying on it.
 
-## 7. Staged rollout
+Do do2 first and let it run clean for a while before cutting dohl over.
+Production is under no deadline.
 
-From [project-goals.md](project-goals.md) and the auth-center requirements,
-unchanged:
+### Rebuilding the database discards live state
 
-1. Land the resource model with `DEPLOY_AUTH_URL` unset everywhere. No behavior
-   change: the instance is legacy-only and still creates projects implicitly.
-2. Register resources and issue keys in auth-center.
-3. Enable auth-center on **do2** with the legacy table still active as a
-   fallback. Register every project on the instance, then confirm real deploys
-   work.
-4. Enable on **dohl** only after do2 has run clean for a while.
-5. Disable the legacy table per instance (`DEPLOY_DISABLE_LEGACY_KEYS=1`) once
-   that instance's keys have migrated.
+The deploy database holds operational state as well as key material.
+`active_deployment` records which deployment is currently serving each project,
+and the `deployment` rows describe what is on disk. **Rebuilding discards
+both** — the files stay on disk, but the server no longer knows which
+deployment is live, so static-web serving and `deploy start-services` have
+nothing to read and `deploy rollback` has no history.
 
-Do not set `DEPLOY_AUTH_URL` on a host still running the **old** server: its
-interim code treats a missing `allowed` as permission granted, which is
-strictly worse than legacy-only.
+The key material is what is being thrown away deliberately; the deployment
+bookkeeping is not. Two recoveries:
+
+- Redeploy every project on the instance, which regenerates the state, or
+- Do a one-off import of `project`, `deployment` and `active_deployment` from
+  the old database. Those three tables keep the shape the old tool gave them
+  precisely so the import is a plain `insert into … select`.
+
+An imported project has rows but no binding, so it is registered but unbound
+and still denies every call until `deploy create-project` binds it (reported as
+`created`, since there was no previous binding). Take a copy of the old
+database before touching anything.
+
+### The circular dependency, which is real
+
+Fail-closed is correct: a deploy that fails because auth-center is unreachable
+is right, one that succeeds because it was unreachable is not. But it means
+auth-center downtime is deploy downtime for every instance pointed at it — and
+**auth-center is itself deployed by this tool**. If auth-center is down and the
+fix is to deploy auth-center, there is no way in.
+
+Before any cutover, have a tested way back in. Decide deliberately whether
+auth-center's own deploys stay on a separate path so the two cannot deadlock.
+`--disable-api-key-check` behind an SSH-only restart is one answer, but it has
+to be a decision that was made and tested, not one discovered during an outage.
+
+Do not point `DEPLOY_AUTH_URL` at a host still running the **old** server: its
+interim code treats a missing `allowed` as permission granted.
 
 ## Verify
 

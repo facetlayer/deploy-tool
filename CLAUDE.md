@@ -22,7 +22,7 @@ crates/deploy-server/  binary `deploy-server`
   server.rs            HTTP + JSON-RPC transport; authorizes, then dispatches
   authz.rs             the R2 decision: resolve → look up resource → introspect
   auth_center.rs       auth-center client, cache, fail-closed behavior
-  db.rs                SQLite schema + migrations (the contract with live instances)
+  db.rs                SQLite schema, created on open; no migrations from the old tool
   handlers/            one module per group of RPC methods
   paths.rs             path-traversal guards for client-supplied relPath
   preserve.rs, manifest.rs, sql.rs, state.rs
@@ -32,6 +32,9 @@ crates/deploy-cli/     binary `deploy`
   commands/            one module per subcommand
   rpc_client.rs        JSON-RPC client
   api_key.rs           key resolution: secrets-file → env → ~/secrets/deploy.env
+
+crates/deploy-server/tests/  authorization.rs, deployment_flow.rs
+crates/deploy-cli/tests/     cli_end_to_end.rs
 ```
 
 ## Shared logic lives in deploy-core
@@ -73,14 +76,23 @@ the old Rust/TS server, for as long as both exist. So:
 - `createProject` is the one method no old server answers. That is fine: it is
   new, and a client calling it against an old server gets a method-not-found.
 
-The same applies to `db.rs`: do2 and dohl have live `db.sqlite` files this
-server opens in place. Add columns via `ADDED_COLUMNS` migrations, never by
-changing an existing `CREATE TABLE`.
+`db.rs` is the opposite case. Compatibility with the old tool's database is
+explicitly not a requirement (R6), so the schema is a single `create table if
+not exists` batch with no migration machinery, and an instance is cut over by
+rebuilding or importing its database rather than by opening the old one in
+place. `project`, `deployment` and `active_deployment` still keep their old
+shape, for one reason only: the documented recovery for a rebuild is a one-off
+import of exactly those three tables, and keeping the shape keeps that import a
+plain `insert into … select`.
 
 ## Tests
 
+266 tests as of 2026-08-29: 93 in `deploy-core`, 87 + 19 + 12 in
+`deploy-server` (unit, `tests/authorization.rs`, `tests/deployment_flow.rs`),
+44 + 11 in `deploy-cli` (unit, `tests/cli_end_to_end.rs`).
+
 ```bash
-cargo test                      # whole workspace
+cargo test --workspace          # whole workspace
 cargo test -p deploy-core       # parser, config, file list, rpc shapes
 cargo test -p deploy-server     # handlers against a temp DB + temp deploy dir
 cargo test -p deploy-cli
@@ -110,8 +122,10 @@ rather than just the return values. Follow that pattern for new handlers.
 - No resource-existence check at `createProject` beyond a best-effort probe —
   auth-center has no resource registry yet. See "Known gap" in
   docs/auth-integration.md before trying to fix it.
-- The legacy `secret_key` table still grants everything. It stays until each
-  instance's keys have migrated, then is turned off per instance with
-  `DEPLOY_DISABLE_LEGACY_KEYS=1`.
+- No local key table, and no flag that brings one back. R6 removed
+  `secret_key` outright, so there is no fallback to add a bypass to; every
+  caller authenticates against auth-center, and an instance without all three
+  auth variables refuses to start. `--disable-api-key-check` is for local
+  development, not a migration path.
 - `deploy-server serve` binds `0.0.0.0`, inherited from the old server. The do2
   convention is `127.0.0.1`; there is no bind flag yet.

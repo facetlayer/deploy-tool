@@ -31,7 +31,7 @@ One block, with each setting on its own indented line.
 
 | Setting | Read by | Meaning |
 |---|---|---|
-| `project-name=<name>` | both | The project. Must already be registered on the destination with `deploy create-project` (see [README](../README.md)). Note the name is *not* what authorizes the deploy — the instance's resource binding is. |
+| `project-name=<name>` | both | The project. Must already be registered on the destination with `deploy create-project`, or every call naming it is denied (see [getting-started.md](getting-started.md#3-register-the-project)). The name is *not* what authorizes the deploy — the instance's resource binding is. |
 | `dest-url=<url>` | client | Base URL of the deploy server, e.g. `https://apf1.dev`. The CLI posts to `<dest-url>/json-rpc`. Overridable per command with `--override-dest`. |
 | `local-dir=<path>` | client | Moves the local root that file rules and hooks resolve against. See [local-dir](#local-dir) below. |
 | `secrets-file=<path>` | client | Read `DEPLOY_API_KEY` from this env file instead of the default `~/secrets/deploy.env`. `~` is expanded. Use it when one machine deploys to instances that require different keys. Precedence: this file (if it exists and has a key) → `DEPLOY_API_KEY` / `GOOBERNETES_API_KEY` in the environment → `~/secrets/deploy.env`. |
@@ -153,10 +153,9 @@ deploy-settings
 
 That is the hotlaps arrangement: configs live in `deploy/`, but every path in
 them is written relative to the project root. Without `local-dir=..` the CLI
-resolves every `include` against `deploy/` and ships an empty bundle. The
-CLI's `--local-dir` flag, where present, wins over the config value.
-Resolution is lexical — the path need not exist yet, so a `before-deploy` step
-may create it.
+resolves every `include` against `deploy/` and ships an empty bundle. No
+command exposes a flag to override it. Resolution is lexical — the path need
+not exist yet, so a `before-deploy` step may create it.
 
 ## Databases
 

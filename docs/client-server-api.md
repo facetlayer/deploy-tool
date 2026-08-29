@@ -88,12 +88,13 @@ instance and binds it to an auth-center resource.
 }
 ```
 
-`created` — the project did not exist. `rebound` — it existed unbound (carried
-over from the old tool), or bound elsewhere with `rebind: true`. `unchanged` —
-already bound to this exact resource, which writes no audit row. Rebinding an
-already-bound project without `rebind` is an error: repointing a project hands
-its deploy rights to a different set of keys, so it is never implicit. Every
-change writes a row to `project_resource_audit`.
+`created` — there was no binding, whether or not a `project` row already
+existed (a project imported from an old database lands here). `rebound` — it
+was bound elsewhere and `rebind: true` was passed. `unchanged` — already bound
+to this exact resource, which writes no history row. Rebinding an already-bound
+project without `rebind` is an error: repointing a project hands its deploy
+rights to a different set of keys, so it is never implicit. Every change writes
+a row to `project_resource_binding_history`, with the key that made it.
 
 `resourceVerified` is false whenever the server could not confirm the resource
 exists — today that is always, because auth-center has no resource registry.
@@ -121,10 +122,11 @@ immediately; with an empty manifest that happens at `finalizeManifest` instead.
 `tags` land in `deployment.tags_json`. The key that authorized the call is
 recorded on the deployment row (R7).
 
-When auth-center is configured on the instance, deploying to a project that is
-not registered, or is registered with no resource binding, is refused. On a
-legacy-only instance (`DEPLOY_AUTH_URL` unset) the old implicit-create behavior
-still applies.
+Deploying to a project that is not registered, or is registered with no
+resource binding, is refused. There is no implicit create: the handler answers
+"Project '<name>' is not registered on this server. Run: deploy create-project
+…", and authorization has already denied the call for the same reason on any
+method that reaches auth-center.
 
 ### addManifestFiles / finalizeManifest
 
@@ -249,7 +251,8 @@ for projects whose manifest is too large to send inline.
 ```
 
 The `authorized_by_*` fields are the R7 attribution: which auth-center key
-shipped a deployment, or `legacy:<id>` for a local secret key.
+shipped the deployment. They are null for rows created before attribution
+existed, or imported from an old database.
 
 ### getDeploymentTags
 
@@ -340,28 +343,29 @@ a single `uploadOneFile`.
 
 ## Authorization
 
-Every call carries `x-api-key` and is checked before dispatch. The decision, in
-order:
+Every call carries `x-api-key` and is checked before dispatch. There is no local
+key table and no path that skips the check. The decision, in order:
 
-1. The local `secret_key` table (no network call). A legacy key grants
-   everything on the instance, and is disabled per instance with
-   `DEPLOY_DISABLE_LEGACY_KEYS=1`.
-2. Otherwise, resolve the call to a project, look up that project's
-   `resource_name`, and introspect the key against
-   `deploy:<resource>:<action>` at auth-center.
+1. Look the method up in `METHOD_TABLE`. An unknown method is denied, not
+   dispatched.
+2. Resolve the call to a project — by `projectName`, or by joining
+   `deployment.deploy_name → project_name` for a `deployName`. `createProject`
+   resolves to the instance's administration resource instead.
+3. Look up that project's row in `project_resource_binding`.
+4. Introspect the key against `deploy:<resource>:<action>` at auth-center.
 
 Anything that goes wrong denies: unknown method, unresolvable deploy name,
-unregistered project, project with no binding, network error, timeout, non-2xx,
-or a response without an explicit `allowed: true`. There is no branch that
-allows a call because no resource could be determined — the old server's
-`allowed ?? true` fallback is gone.
+unregistered project, project with no binding, empty binding, network error,
+timeout, non-2xx, or a response without an explicit `allowed: true`. There is no
+branch that allows a call because no resource could be determined — the old
+server's `allowed ?? true` fallback is gone.
 
 Positive verdicts are cached for 30 s keyed by `sha256(key) | resource |
 action`; negative verdicts are never cached, so a revocation takes effect
 within that window at worst.
 
-`deploy-server serve --disable-api-key-check` skips all of it. Development
-only; the startup banner prints a warning when it is set.
+`deploy-server serve --disable-api-key-check` skips all of it. Local
+development only; the startup banner prints a boxed warning when it is set.
 
 Full model, scope-string format and configuration variables:
 [auth-integration.md](auth-integration.md).

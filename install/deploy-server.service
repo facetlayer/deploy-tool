@@ -9,14 +9,16 @@ WorkingDirectory=/root
 
 # Where the SQLite database lives. Left implicit on do2/dohl: running as root
 # with neither DEPLOY_STATE_DIR nor XDG_STATE_HOME set resolves to
-# /root/.local/state/deploy/db.sqlite, which is the database the old server
-# already wrote and this one opens in place. Set DEPLOY_STATE_DIR here only if
-# you mean to point the instance somewhere else.
+# /root/.local/state/deploy/db.sqlite. Set DEPLOY_STATE_DIR in the env file
+# only if you mean to point the instance somewhere else.
 
-# DEPLOY_AUTH_URL, DEPLOY_AUTH_KEY, DEPLOY_ADMIN_RESOURCE and
-# DEPLOY_DISABLE_LEGACY_KEYS. Secrets stay OUT of this version-controlled file:
-# the env file is root-owned, 0600, created by hand over SSH, and never in git
-# or in a deploy bundle. See install/deploy.env.template.
+# Carries DEPLOY_AUTH_URL, DEPLOY_AUTH_KEY and DEPLOY_ADMIN_RESOURCE, all three
+# of which are required — the server exits at startup if any is missing, so a
+# half-filled env file shows up here as a unit restarting in a loop with the
+# missing variable named in the journal. Secrets stay OUT of this
+# version-controlled file: the env file is root-owned, 0600, created by hand
+# over SSH, and never in git or in a deploy bundle. See
+# install/deploy.env.template.
 EnvironmentFile=/root/secrets/deploy.env
 
 # --port is required; there is no default. 4715 is what the old server used on
