@@ -68,8 +68,7 @@ pub fn get_path_in_deployment_dir(
         )
         .optional()?;
 
-    let deploy_dir =
-        deploy_dir.ok_or_else(|| anyhow!("Deployment not found: {}", deploy_name))?;
+    let deploy_dir = deploy_dir.ok_or_else(|| anyhow!("Deployment not found: {}", deploy_name))?;
 
     let full_deploy_dir = db::get_deployments_dir(conn)?.join(deploy_dir);
     get_safe_path_in_dir(&full_deploy_dir, rel_path)
@@ -118,7 +117,9 @@ mod tests {
 
     #[test]
     fn rejects_traversal_into_a_sibling_deployment() {
-        assert!(get_safe_path_in_dir(Path::new(DEPLOY_DIR), "../other-project/config.json").is_err());
+        assert!(
+            get_safe_path_in_dir(Path::new(DEPLOY_DIR), "../other-project/config.json").is_err()
+        );
     }
 
     #[test]
@@ -160,9 +161,6 @@ mod tests {
 
     #[test]
     fn normalize_folds_dot_and_dot_dot() {
-        assert_eq!(
-            normalize(Path::new("/a/./b/../c")),
-            PathBuf::from("/a/c")
-        );
+        assert_eq!(normalize(Path::new("/a/./b/../c")), PathBuf::from("/a/c"));
     }
 }

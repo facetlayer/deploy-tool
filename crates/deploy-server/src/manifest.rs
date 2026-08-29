@@ -65,8 +65,9 @@ mod tests {
     #[test]
     fn ignores_extra_fields_from_an_older_client() {
         // The TypeScript CLI sends a `sourcePath` the server has no use for.
-        let manifest =
-            parse_manifest_json(Some(r#"[{"relPath":"a.txt","sha":"aaa","sourcePath":"/x/a.txt"}]"#));
+        let manifest = parse_manifest_json(Some(
+            r#"[{"relPath":"a.txt","sha":"aaa","sourcePath":"/x/a.txt"}]"#,
+        ));
         assert_eq!(manifest.len(), 1);
         assert_eq!(manifest[0].rel_path, "a.txt");
     }

@@ -123,7 +123,10 @@ pub fn verify_deployment(state: &AppState, params: &Json) -> Result<Json> {
     }
 
     let total = manifest.len();
-    println!("Verifying deployment {}: hashing {} files...", deploy_name, total);
+    println!(
+        "Verifying deployment {}: hashing {} files...",
+        deploy_name, total
+    );
 
     // Resolve every target path up front, so the parallel hashing below needs
     // no database access.
@@ -159,7 +162,10 @@ pub fn verify_deployment(state: &AppState, params: &Json) -> Result<Json> {
                                 "Deployment verification failed: {} - file is missing: {}",
                                 deploy_name, rel_path
                             );
-                            Some(format!("Incomplete deployment: file is missing: {}", rel_path))
+                            Some(format!(
+                                "Incomplete deployment: file is missing: {}",
+                                rel_path
+                            ))
                         }
                         Some(sha) if &sha != expected_sha => {
                             println!(

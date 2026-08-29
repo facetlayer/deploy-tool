@@ -7,9 +7,7 @@ use rusqlite::{Connection, OptionalExtension};
 use serde_json::Value as Json;
 
 use deploy_core::config::{parse_deploy_database_configs, parse_deploy_databases};
-use deploy_core::rpc::{
-    DatabaseInfo, ExecuteSqlParams, ListDatabasesParams, ListDatabasesResult,
-};
+use deploy_core::rpc::{DatabaseInfo, ExecuteSqlParams, ListDatabasesParams, ListDatabasesResult};
 use deploy_core::sqlnames::parse_sql_table_names;
 
 use crate::handlers::parse_params;
@@ -40,12 +38,9 @@ fn get_project_config(conn: &Connection, project_name: &str) -> Result<String> {
         )
         .optional()?;
 
-    config.flatten().ok_or_else(|| {
-        anyhow!(
-            "Deployment config not found for project: {}",
-            project_name
-        )
-    })
+    config
+        .flatten()
+        .ok_or_else(|| anyhow!("Deployment config not found for project: {}", project_name))
 }
 
 pub fn list_databases(state: &AppState, params: &Json) -> Result<Json> {

@@ -227,8 +227,7 @@ mod tests {
     fn create_deployment_records_the_authorizing_key() {
         let server = setup("attribution");
         let config = config_for("attributed-project", "");
-        let deploy_name =
-            server.create_deployment("attributed-project", json!([]), &config);
+        let deploy_name = server.create_deployment("attributed-project", json!([]), &config);
 
         let listed = server
             .call(
@@ -278,7 +277,14 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .unwrap();
-        assert_eq!(audit, (None, "hotlaps-staging".to_string(), Some("key-abc".to_string())));
+        assert_eq!(
+            audit,
+            (
+                None,
+                "hotlaps-staging".to_string(),
+                Some("key-abc".to_string())
+            )
+        );
     }
 
     #[test]
@@ -286,7 +292,9 @@ mod tests {
         let server = setup("create-project-repeat");
         let params = json!({ "projectName": "hotlaps-api", "resourceName": "hotlaps-staging" });
 
-        server.call(methods::CREATE_PROJECT, params.clone()).unwrap();
+        server
+            .call(methods::CREATE_PROJECT, params.clone())
+            .unwrap();
         let result = server.call(methods::CREATE_PROJECT, params).unwrap();
 
         assert_eq!(result["outcome"], "unchanged");
@@ -318,7 +326,10 @@ mod tests {
             )
             .unwrap_err()
             .to_string();
-        assert!(err.contains("already bound to resource 'hotlaps-staging'"), "{err}");
+        assert!(
+            err.contains("already bound to resource 'hotlaps-staging'"),
+            "{err}"
+        );
 
         let result = server
             .call(
@@ -342,7 +353,13 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
-        assert_eq!(audit, (Some("hotlaps-staging".to_string()), "hotlaps-prod".to_string()));
+        assert_eq!(
+            audit,
+            (
+                Some("hotlaps-staging".to_string()),
+                "hotlaps-prod".to_string()
+            )
+        );
     }
 
     #[test]
@@ -423,7 +440,10 @@ mod tests {
             )
             .unwrap_err()
             .to_string();
-        assert!(err.contains("not bound to an auth-center resource"), "{err}");
+        assert!(
+            err.contains("not bound to an auth-center resource"),
+            "{err}"
+        );
     }
 
     // --- getNeededFiles ---
@@ -557,7 +577,10 @@ mod tests {
     #[test]
     fn finish_uploads_keeps_files_matching_preserve_existing_files() {
         let server = setup("finish-preserve");
-        let config = config_for("preserve-project", "preserve-existing-files _next/static/**");
+        let config = config_for(
+            "preserve-project",
+            "preserve-existing-files _next/static/**",
+        );
         let deploy_name = server.create_deployment(
             "preserve-project",
             json!([{ "relPath": "index.html", "sha": "aaa" }]),
@@ -606,7 +629,11 @@ mod tests {
         let long_ago = SystemTime::now() - Duration::from_secs(30 * 24 * 60 * 60);
         let handle = fs::File::options().write(true).open(&old_asset).unwrap();
         handle
-            .set_times(fs::FileTimes::new().set_accessed(long_ago).set_modified(long_ago))
+            .set_times(
+                fs::FileTimes::new()
+                    .set_accessed(long_ago)
+                    .set_modified(long_ago),
+            )
             .unwrap();
         drop(handle);
 
@@ -824,8 +851,8 @@ mod tests {
             )
             .unwrap();
 
-        let written = fs::read_to_string(server.deploy_dir("upload-project").join("src/app.js"))
-            .unwrap();
+        let written =
+            fs::read_to_string(server.deploy_dir("upload-project").join("src/app.js")).unwrap();
         assert_eq!(written, "hello");
 
         let remaining: i64 = server
@@ -1037,7 +1064,9 @@ mod tests {
             let expected_active = entry["deploy_name"] == json!(first);
             assert_eq!(entry["is_active"], json!(expected_active));
         }
-        assert!(entries.iter().any(|entry| entry["deploy_name"] == json!(second)));
+        assert!(entries
+            .iter()
+            .any(|entry| entry["deploy_name"] == json!(second)));
     }
 
     #[test]
@@ -1126,7 +1155,10 @@ mod tests {
             )
             .unwrap_err()
             .to_string();
-        assert!(err.contains("blocked when running inside a coding agent"), "{err}");
+        assert!(
+            err.contains("blocked when running inside a coding agent"),
+            "{err}"
+        );
     }
 
     #[test]

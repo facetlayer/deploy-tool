@@ -124,7 +124,10 @@ fn install_candle_config(deploy_dir: &Path, candle_config_path: &str) -> Result<
         ));
     }
 
-    println!("Installing candle config: {} -> .candle.json", candle_config_path);
+    println!(
+        "Installing candle config: {} -> .candle.json",
+        candle_config_path
+    );
     std::fs::copy(&source_file, &dest_file)?;
     Ok(())
 }
@@ -244,7 +247,10 @@ pub fn activate_deployment(state: &AppState, params: &Json) -> Result<Json> {
             "candle-config:restart",
         ) {
             let message = error.to_string();
-            eprintln!("[deploy error] candle-config:restart hook error: {}", message);
+            eprintln!(
+                "[deploy error] candle-config:restart hook error: {}",
+                message
+            );
             hook_errors.push(message);
         }
 

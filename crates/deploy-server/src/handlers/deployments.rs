@@ -260,7 +260,10 @@ pub fn create_deployment(
         ],
     )?;
 
-    println!("Setting up new deployment at:  {}", full_deploy_dir.display());
+    println!(
+        "Setting up new deployment at:  {}",
+        full_deploy_dir.display()
+    );
     let _ = std::fs::create_dir(&full_deploy_dir);
 
     // Only lay out directories when the manifest came inline. A large deploy
@@ -271,7 +274,9 @@ pub fn create_deployment(
 
     println!("Deployment created: {}", deploy_name);
 
-    Ok(serde_json::to_value(DeploymentCreatedEvent::new(deploy_name))?)
+    Ok(serde_json::to_value(DeploymentCreatedEvent::new(
+        deploy_name,
+    ))?)
 }
 
 pub fn add_manifest_files(state: &AppState, params: &Json) -> Result<Json> {
@@ -338,7 +343,13 @@ pub fn list_deployments(state: &AppState, params: &Json) -> Result<Json> {
 
     let conn = state.db();
 
-    type Row = (String, String, Option<String>, Option<String>, Option<String>);
+    type Row = (
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    );
     let rows: Vec<Row> = {
         let mut stmt = conn.prepare(
             "select deploy_name, created_at, tags_json, authorized_by_key_id,

@@ -10,7 +10,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::Result;
 
 use deploy_core::config::{parse_preserve_config, PreserveConfig};
-use deploy_core::filelist::{find_leftover_files, parse_rules_file, FileList, FileMatchRule, RuleType};
+use deploy_core::filelist::{
+    find_leftover_files, parse_rules_file, FileList, FileMatchRule, RuleType,
+};
 
 pub struct LeftoverScan {
     /// Destination files that should be deleted, with preserve rules already
