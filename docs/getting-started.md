@@ -15,7 +15,8 @@ The whole sequence, once a server exists:
 1. Set the instance's deployments directory (`set-deployments-dir`).
 2. Configure `DEPLOY_AUTH_URL`, `DEPLOY_AUTH_KEY` and `DEPLOY_ADMIN_RESOURCE`
    on the instance; it will not start without all three.
-3. `deploy create-project <name> --resource <resource>`.
+3. `deploy create-project <name> --resource <resource>`, then create the role
+   and key it prints with `auth-setup`.
 4. `deploy run <config>.qc`.
 
 Steps 1 and 2 are done once per instance and are in
@@ -40,9 +41,13 @@ Put it on your `PATH`.
 ## 2. Set up the client's key
 
 Keys are issued in auth-center; the server has no local key table. A key is a
-set of `deploy:<resource>:<action>` grants — see
+set of `<resource>:<action>` grants — two segments, action last. See
 [auth-integration.md](auth-integration.md) for the format, and for which action
 each command needs.
+
+You will not have a key until someone creates one with `auth-setup`, which is
+step 3's job; `deploy auth-scopes` prints the exact commands. Come back here
+once you have the key it mints.
 
 The CLI looks for a key in this order:
 
@@ -71,29 +76,82 @@ deploy create-project my-app --resource my-app-staging --override-dest https://a
 
 This binds the project name to an auth-center resource **on that instance**.
 Every later call for this project is checked against
-`deploy:my-app-staging:<action>`. The binding lives in the instance's database
-and is never taken from a client, which is what lets the same project name
-require different resources on staging and production hosts.
+`my-app-staging:<action>`. The binding lives in the instance's database and is
+never taken from a client, which is what lets the same project name require
+different resources on staging and production hosts.
+
+Resource names are per-project-per-environment for that reason: `my-app-staging`
+and `my-app-prod` are separate resources in the same auth-center project, so a
+staging key presented to production is denied. `--resource` must not contain a
+`:` and both the CLI and the server refuse one.
 
 Skipping this step is the failure most likely to catch out someone used to the
 old tool: without a binding there is no resource to check a key against, so
-`deploy run` is refused with "Project '<name>' is not registered on this
-server", and read-only commands answer HTTP 401.
+every call naming the project answers HTTP 401, reads included. The server's
+journal names the reason; the client sees a bare `Unauthorized`, because an
+unrecognized key is told nothing about this instance's bindings.
 
 There is no config file yet, so the destination has to be given with
 `--override-dest`. Registering requires a key holding
-`deploy:<instance-admin-resource>:create-project`, which is a different key from
-the one that deploys.
+`<instance-admin-resource>:create-project` — e.g. `do2-deploy:create-project` —
+which is a different key from the one that deploys.
 
-The command prints the scope strings keys for this project must hold. It also
-warns that it could not verify the resource exists — auth-center has no
-resource registry yet, so a typo in the resource name cannot be caught here and
-would show up later as every deploy being denied. Check the spelling against
-the dashboard.
+The command finishes by printing the scopes this project needs and the
+ready-to-run `auth-setup` commands that create them. Nothing verifies that the
+resource exists: auth-center has no endpoint that could answer, and resources
+are derived rather than declared, so at this point the resource usually does not
+exist yet — the `auth-setup` commands are what bring it into being. A typo shows
+up at the first call as `denied: this key does not hold my-app-stagign:deploy`,
+which is why the generated commands are worth pasting rather than retyping.
 
 Re-running with the same resource is a no-op. Pointing an already-bound project
 at a different resource requires `--rebind`, and is recorded in the instance's
 binding history.
+
+### 3b. Create the role and the key
+
+The same block `create-project` prints is available on its own, before you have
+an admin key or a server to talk to:
+
+```bash
+deploy auth-scopes my-app.qc --resource my-app-staging
+```
+
+It contacts nothing and needs no key. It reads the config for the project name
+and destination, derives the scopes from the same method table the server
+authorizes against, and prints the `auth-setup` commands to run — roughly:
+
+```bash
+auth-setup create-role my-app-staging-deployer \
+    --project <auth-center-project-id> \
+    --scope my-app-staging:deploy \
+    --scope my-app-staging:read \
+    --description 'Ship and inspect deployments of my-app-staging'
+
+auth-setup create-key my-app-staging-ci \
+    --project <auth-center-project-id> \
+    --service github-actions \
+    --role my-app-staging-deployer
+```
+
+`auth-setup` holds no credential: each command prints an approval URL and a
+confirmation code, opens a browser, and waits for an admin to approve. The
+request is validated when it is made, so a malformed scope fails immediately
+rather than after someone approves it, and it expires after 15 minutes. A new
+key's plaintext is printed once and then wiped from the server — put it in
+`~/secrets/deploy.env` (step 2) straight away.
+
+`my-app-staging:execute-sql` and `my-app-staging:rollback` are printed
+*separately*, not folded into that role. That is deliberate: the actions are
+split so a CI key that ships builds cannot run arbitrary SQL against the
+project's database. Grant them to the keys that need them, as their own role.
+
+`--project` is the auth-center project that owns the application — resource
+names are global across auth-center projects, so `my-app-staging` must be
+declared in exactly one. Do not claim a bare application name as a resource
+(`hotlaps` is where `hotlaps:admin`, the SSO client's required scope, lives).
+`auth-service check-conflicts` on the auth host reports any name owned by two
+projects.
 
 ## 4. Write the config
 

@@ -3,8 +3,9 @@
 How `deploy-server` authenticates and authorizes callers against
 [auth-center](../../auth-center). Normative source:
 `~/auth-center/docs/deploy-service-requirements.md` (R1–R7). This document
-records the decisions that doc left open, and the gaps that are blocked on
-auth-center work.
+records the decisions that doc left open, and the one requirement (R1's
+resource-existence check) that turned out not to be implementable, with what
+replaces it.
 
 ## What auth-center actually offers today
 
@@ -29,54 +30,91 @@ PUT  /api/v1/secrets/*path
 ```
 
 `allowed`/`scope` appear **only** when the request carried a `scope`. An
-unknown or revoked token gets `{"active": false}`.
+unknown or revoked token gets `{"active": false}`. That distinction is what
+lets a denial tell an active key which scope it lacks while telling an unknown
+one nothing — see "What a denial tells the caller".
 
-**There is no resource entity in auth-center.** No resources table, no
-registration endpoint, no way to list or look up a resource. Authorization is a
-single flat scope string matched against the key's granted patterns, where `*`
+Admin mutations (creating projects, roles and keys) are not on this surface at
+all. They go through `auth-setup` and a human approval; see "Creating projects,
+roles and keys" below.
+
+**Resources are derived, not declared.** There is no resources table, no
+registration endpoint, and no service-to-service way to look one up. A resource
+exists once some key, role or secret names it. The only listing is
+`/admin/api/resources`, gated on `auth:admin` — a scope that can mint any key
+in any project, which a deploy instance must never hold. Authorization itself is
+a single flat scope string matched against the key's granted patterns, where `*`
 matches one segment (not `:` or `/`) and `**` matches everything.
 
 The requirements doc's resource model therefore has to be built *on top of*
 flat scope strings. Decisions D1 and D2 below are how.
 
-## D1 — Resource and action encode into one scope string
+## D1 — A scope is `<resource>:<action>`
 
 ```
-deploy:<resource>:<action>
+<resource>:<action>
 ```
 
-The five actions from R3:
+**Exactly two segments, the action last.** auth-center's `validate_scope`
+(`~/auth-center/backend/src/scopes.rs`) enforces it and refuses a third
+segment; `secrets:<path>:<action>` is the sole exception, and it is not ours.
+
+The five actions from R3, and the methods each covers (generated from
+`METHOD_TABLE` in `crates/deploy-core/src/rpc.rs`, which is what the server
+actually authorizes against):
 
 | Action | Methods |
 |---|---|
 | `deploy` | `createDeployment`, `addManifestFiles`, `finalizeManifest`, `getNeededFiles`, `uploadOneFile`, `startMultiPartUpload`, `uploadFilePart`, `finishMultiPartUpload`, `finishUploads`, `verifyDeployment`, `activateDeployment` |
 | `read` | `listDeployments`, `getDeploymentTags`, `previewDeployment`, `previewByDeployName`, `downloadFile`, `listDatabases` |
-| `sql` | `executeSql` |
+| `execute-sql` | `executeSql` |
 | `rollback` | `rollback` |
 | `create-project` | `createProject` (instance administration) |
 
 Examples:
 
-- `deploy:hotlaps-staging:deploy` — a CI key that ships to staging.
-- `deploy:hotlaps-prod:read` — an on-call key that can only look.
-- `deploy:hotlaps-staging:*` — everything on the staging resource, including
-  `sql`. Note `*` does not cross `:`, so this does not grant another resource.
-- `deploy:**` — a laptop key for every resource on every instance. Issue
-  sparingly.
+- `hotlaps-api-staging:deploy` — a CI key that ships to staging.
+- `hotlaps-api-prod:read` — an on-call key that can only look.
+- `hotlaps-api-staging:*` — everything on the staging resource, including
+  `execute-sql`. Note `*` does not cross `:`, so this grants every action on
+  that one resource and cannot reach another.
+- `**` — a laptop key for every resource everywhere. Issue sparingly.
 
-This layout means R3's "`sql` must be grantable independently" falls out of
-auth-center's existing matcher with no server-side change: a key granted
-`deploy:hotlaps-staging:deploy` does not match `deploy:hotlaps-staging:sql`.
+R3's "`execute-sql` must be grantable independently" falls out of auth-center's
+existing matcher with no server-side change: a key granted
+`hotlaps-api-staging:deploy` does not match `hotlaps-api-staging:execute-sql`.
 
-**This format is a cross-repo contract.** Keys minted in the auth-center
-dashboard must use exactly these strings, or every deploy is denied.
+**This format is a cross-repo contract.** Keys must be minted with exactly
+these strings, or every deploy is denied. Do not write them by hand — run
+`deploy auth-scopes <config.qc> --resource <name>` and paste what it prints.
+
+### Two ways to get this wrong, one of which auth-center cannot catch
+
+There is no `deploy:` namespace to put grouping in. Grouping goes into the
+resource *name*: `do2-deploy`, not `deploy:do2`.
+
+1. **Three segments.** `deploy:hotlaps-api-staging:deploy` is rejected at write
+   time, so no such key can be minted. That much is safe. What is not safe is
+   the rejection's *suggested fix*: `validate_scope` joins all but the last
+   segment with `-` and proposes `deploy-hotlaps-api-staging:deploy`. That is
+   valid, mints cleanly, and names a resource this server will never ask about.
+   Take the suggestion and you get a key that is denied on every call, with a
+   scope string that looks right at a glance.
+2. **The reversed two-segment form.** `deploy:hotlaps-api-staging` is
+   structurally valid — resource `deploy`, action `hotlaps-api-staging`. It
+   simply means the wrong thing, and auth-center has no way to detect that. The
+   ordering is our responsibility, which is the other reason to generate the
+   string rather than type it.
+
+`--resource` values containing `:` are rejected by both the CLI and the server,
+so the three-segment scope cannot be produced from a resource name here.
 
 ### Why not `deploy:<project>`
 
-That is the interim format, and it is what R1 and defect 2 exist to kill: the
+That was the interim format, and it is what R1 and defect 2 exist to kill: the
 project name is client-supplied and identical for `hotlaps-api` staging and
 production. The resource is server-side and per instance, so the same project
-name maps to `hotlaps-staging` on do2 and `hotlaps-prod` on dohl.
+name maps to `hotlaps-api-staging` on do2 and `hotlaps-api-prod` on dohl.
 
 ## D2 — Instance administration resource
 
@@ -85,18 +123,98 @@ project. It is configured per instance:
 
 | Variable | Meaning |
 |---|---|
-| `DEPLOY_ADMIN_RESOURCE` | Resource name for this instance's administration, e.g. `deploy-do2`. Required whenever `DEPLOY_AUTH_URL` is set. |
+| `DEPLOY_ADMIN_RESOURCE` | Resource name for this instance's administration, e.g. `do2-deploy`. Required. |
 
 So registering a project on do2 requires a key holding
-`deploy:deploy-do2:create-project`. There is deliberately no default and no
-derivation from the hostname — an instance that forgets to set this refuses
-`createProject` rather than falling back to something guessable.
+`do2-deploy:create-project`. There is deliberately no default and no derivation
+from the hostname — an instance that forgets to set this refuses `createProject`
+rather than falling back to something guessable.
+
+`DEPLOY_ADMIN_RESOURCE` is a **deliberate addition** to the requirements' config
+table, which omits it. `createProject` resolves to no project, so without this
+variable there is nothing to authorize it against; deriving it from a hostname
+would make the check guessable, which defeats it.
+
+The `-deploy` suffix is not decoration — see "Reserved names" below.
+
+## Project topology in auth-center
+
+A resource name is global across auth-center projects, and is owned by the
+project that first declares one. The layout:
+
+- **One "Server Admin" project** owns the deploy instances' administration
+  resources: `do2-deploy` and `dohl-deploy`. Its keys hold
+  `do2-deploy:create-project` (and `dohl-deploy:create-project`) — the keys that
+  register projects on an instance, and nothing else.
+- **Each application is its own auth-center project**, owning its own deploy
+  resources: `hotlaps-api-staging`, `hotlaps-api-prod`, and so on. Resources
+  are per-project-*per-environment*, so a compromised frontend CI key cannot
+  touch the API, and a staging key cannot touch production.
+- **The binding project → resource lives in each deploy instance's own
+  database**, not in auth-center. That is what separates staging from
+  production: do2's `hotlaps-api` binds to `hotlaps-api-staging`, dohl's
+  `hotlaps-api` binds to `hotlaps-api-prod`. Same project name, same `.qc`
+  file, different resource, different keys.
+
+### Reserved names
+
+Because the namespace is global, two families of name must not be claimed as
+deploy resources:
+
+- **Bare `hotlaps`** (and any other application's bare name). That is where
+  `hotlaps:admin` lives — the SSO client's `required_scope`. Claiming it in
+  another project would collide with the thing that gates sign-in.
+- **Bare `do2` / `dohl`.** Those name the hosts, not their deploy services;
+  hence the `-deploy` suffix on the administration resources.
+
+`auth-service check-conflicts`, run on the auth host, reports any resource name
+owned by two projects. Run it after creating resources.
+
+## Creating projects, roles and keys: `auth-setup`
+
+`auth-setup` (`~/auth-center/setup-tool`, already on `PATH`) is how the
+topology above gets created. It runs on a laptop **holding no credential**: it
+proposes the change, prints an approval URL and a confirmation code, opens a
+browser, and blocks until an admin signs in and approves. The change then runs
+as that admin. It is RFC 8628's device authorization grant pointed at admin
+mutations, which is why there is no `auth:admin` key on any developer machine.
+
+```
+auth-setup create-project <id> [--name <display>] [--description <text>]
+auth-setup create-role <name> --project <id> [--scope <s>]… [--description <text>]
+auth-setup create-key <name> --project <id> [--scope <s>]… [--role <r>]…
+                      [--service <svc>] [--description <text>] [--expires-in-days <n>]
+
+COMMON: --url <base> (default $AUTH_URL), --json, --no-open, --timeout <secs>
+```
+
+Three properties worth knowing:
+
+- **Requests are validated when they are made**, before anyone is asked to
+  approve. A malformed scope fails immediately and costs nobody an approval —
+  which also makes `auth-setup create-role` a cheap way to check a scope
+  string's shape against the live service, Ctrl-C before approving.
+- **Requests expire after 15 minutes.** An unapproved request is not a pending
+  change.
+- **A created key's plaintext is shown once** and is wiped from the server the
+  moment the tool collects it. There is no second chance to read it.
+
+`deploy auth-scopes <config.qc> --resource <name>` prints ready-to-run
+`auth-setup` lines for a project. It contacts no server and needs no API key —
+everything it prints is derived from the config file and from `METHOD_TABLE`,
+so what you paste is what the server will ask for, by construction.
+
+The suggested role it prints grants only `deploy` and `read`. `execute-sql` and
+`rollback` are printed separately, as a deliberate second step: R3 splits the
+actions precisely so that a CI key which ships builds cannot run arbitrary SQL,
+and a copy-paste line bundling them would make the split decorative.
+`deploy create-project` prints the same block after registering.
 
 ## Configuration
 
 | Variable | Meaning |
 |---|---|
-| `DEPLOY_AUTH_URL` | auth-center base URL, e.g. `https://auth.apf1.dev`. **Required** — there is no legacy fallback, so an instance without it cannot authenticate anyone. Never hardcoded. |
+| `DEPLOY_AUTH_URL` | auth-center base URL, `https://$AUTH_HOST`. **Required** — there is no legacy fallback, so an instance without it cannot authenticate anyone. Never hardcoded in the binary, and never written into a doc: the hostname is a deployment detail. |
 | `DEPLOY_AUTH_KEY` | This instance's own auth-center service key, holding `auth:introspect`. Each instance gets its own so they revoke independently. |
 | `DEPLOY_ADMIN_RESOURCE` | Per D2. Required. |
 
@@ -122,7 +240,7 @@ Every RPC, in order:
    `deployment.deploy_name → deployment.project_name`. `createProject` resolves
    to the instance administration resource instead.
 2. **Look up the project's bound resource** (`project_resource_binding`).
-3. **Introspect** the presented key against `deploy:<resource>:<action>`.
+3. **Introspect** the presented key against `<resource>:<action>`.
 4. **Deny on any failure** — unknown deploy name, unregistered project, project
    with no bound resource, key lacking the action.
 
@@ -130,6 +248,32 @@ There is no path that allows a call because no resource could be determined.
 Concretely, the interim `allowed ?? true` fallback is gone: a response without
 an explicit `allowed: true` is a denial. Since we always send a scope, a
 well-behaved auth-center always answers with `allowed`.
+
+## What a denial tells the caller
+
+The server's journal always gets the full reason. What goes back over the wire
+in the JSON-RPC error's `data` depends on what the key turned out to be
+(`Denial::client_detail` in `crates/deploy-server/src/authz.rs`):
+
+- **An active key lacking the scope** is told which scope it lacks:
+  `this key does not hold hotlaps-api-staging:deploy`. The CLI surfaces it as
+  `JSON-RPC createDeployment denied: this key does not hold …`. That is the
+  whole diagnostic: a caller with a real key sees the typo immediately, which
+  is what replaces the registration-time existence check auth-center cannot
+  offer.
+- **An unknown, revoked or expired key** gets a bare `Unauthorized` with no
+  detail at all. Naming the scope there would let anyone holding a random
+  string enumerate this instance's project → resource bindings, one guess at a
+  time.
+- **Everything else** — no key presented, unknown method, unresolvable deploy
+  name, unregistered or unbound project — also gets a bare `Unauthorized`.
+
+The one deliberate exception is an unreachable auth-center, which is told to
+the caller in coarse terms ("could not reach auth-center; see the server's
+journal"). It is not a verdict about the caller and it names no binding, and it
+is the failure an operator is most likely to meet during a cutover — where the
+alternative is staring at a bare `Unauthorized` while the real cause sits in a
+journal on a host they may not be able to read.
 
 ## Fail closed (R4)
 
@@ -175,24 +319,39 @@ table with its own history, rather than as a column on `project`:
 auth-center key that authorized the deployment. `deploy history` surfaces it.
 Every key is an auth-center key, so there is no second attribution form.
 
-## Known gap — resource existence is not verified at registration
+## R1's resource-existence check: the answer is "check at first use"
 
 R1 asks that `create-project` fail if auth-center does not recognize the named
 resource, so a typo surfaces at registration rather than as a mass denial at
-the next deploy.
+the next deploy. **It is not implementable, and the code that tried has been
+removed** (`verify_resource_exists`, the `ResourceCheck` enum, and the
+`resourceVerified` field on `createProject`). Two reasons, both structural:
 
-**auth-center has no endpoint that can answer this** — there is no resource
-registry to query. `deploy-server` therefore attempts
-`GET {DEPLOY_AUTH_URL}/api/v1/resources/<name>` and:
+- The only listing of resources is `/admin/api/resources`, gated on
+  `auth:admin` — a scope that can mint any key in any project. A deploy
+  instance holding that would be a far worse problem than the typo it was
+  checking for. There is no service-to-service endpoint that can answer the
+  question.
+- Resources are *derived*, not declared. One exists as soon as some key, role
+  or secret names it. At registration time the honest answer is usually "not
+  yet" — the resource is created by the very `auth-setup create-role` /
+  `create-key` calls that follow registration — so an existence check would
+  reject the correct order of operations.
 
-- `200` ⇒ verified, proceed.
-- `404` on the *resource* ⇒ reject the registration.
-- `404` because the *endpoint* does not exist, or any other error ⇒ log a
-  loud warning that the resource could not be verified, and proceed.
+What replaces it:
 
-Until auth-center grows a resource registry, every registration takes the third
-branch. This is the one requirement in the doc that cannot be satisfied today;
-it is not a stub in the authorization path, only in the typo check.
+1. **`create-project` refuses a `:` in `--resource`**, which is the one
+   malformed shape that can be detected locally.
+2. **It prints the exact `auth-setup` commands** for the resource it just
+   bound, so the resource is created from a generated string rather than a
+   typed one.
+3. **The first denied call names the scope that was checked** — see "What a
+   denial tells the caller". A typo shows up as
+   `this key does not hold hotlpas-api-staging:deploy`, which is legible
+   without server access.
+
+This is a deliberate decision, not an outstanding gap. Nothing in the
+authorization path is stubbed.
 
 ## Rollout
 
@@ -200,8 +359,11 @@ There is no legacy fallback, so enabling this on an instance is a cutover.
 Per instance:
 
 1. Land the resource model and the resolution path.
-2. Create the resources and issue keys in auth-center, including the instance's
-   own `auth:introspect` service key.
+2. Create the projects, roles and keys with `auth-setup`, including the
+   instance's own `auth:introspect` service key. Use
+   `deploy auth-scopes <config.qc> --resource <name>` to generate the commands,
+   and `auth-service check-conflicts` afterwards to confirm no resource name is
+   owned by two projects.
 3. Register every existing project on the instance against its resource, and
    distribute the new keys to every caller that needs one — CI secrets,
    `~/secrets/deploy.env`, and so on. Do this **before** the cutover; a caller

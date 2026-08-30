@@ -32,6 +32,10 @@ means every deploy of that project is denied.
    deploy create-project my-app --resource my-app-staging --override-dest https://apf1.dev
    ```
 
+   Then create the role and key it prints, with `auth-setup`. `deploy
+   auth-scopes my-app.qc --resource my-app-staging` prints the same commands
+   without contacting anything.
+
 4. **Deploy** — `deploy run my-app.qc`.
 
 Steps 1 and 2 are per instance ([docs/server-setup.md](docs/server-setup.md));
@@ -47,11 +51,17 @@ unbound project is refused — there is no fallback and no implicit create.
 
 The resource binding lives in that instance's own database and is never
 supplied by a client. That is what lets the same project name — `hotlaps-api`,
-say — require `hotlaps-staging` on do2 and `hotlaps-prod` on dohl, so a staging
-key presented to production is denied.
+say — require `hotlaps-api-staging` on do2 and `hotlaps-api-prod` on dohl, so a
+staging key presented to production is denied.
 
-Registering requires a key holding `deploy:<admin-resource>:create-project` on
-the instance (see [docs/auth-integration.md](docs/auth-integration.md), D2).
+Registering requires a key holding `<admin-resource>:create-project` on the
+instance — `do2-deploy:create-project`, for example (see
+[docs/auth-integration.md](docs/auth-integration.md), D2).
+
+A scope is `<resource>:<action>`: exactly two segments, action last. Generate
+the strings with `deploy auth-scopes` rather than typing them; the ways to get
+this wrong are covered in [docs/auth-integration.md](docs/auth-integration.md),
+D1.
 
 ## Install
 
@@ -75,7 +85,8 @@ On the client, put the auth-center key in `~/secrets/deploy.env` as
 
 | Command | What it does |
 |---|---|
-| `deploy create-project <name> --resource <r> [--rebind] --override-dest <url>` | Register a project on an instance and bind it to an auth-center resource. Required before the first deploy. |
+| `deploy auth-scopes <config.qc> --resource <r>` | Print the auth-center scopes a project needs and the `auth-setup` commands that create them. Contacts no server; needs no key. |
+| `deploy create-project <name> --resource <r> [--rebind] --override-dest <url>` | Register a project on an instance and bind it to an auth-center resource, and print the same `auth-setup` commands. Required before the first deploy. |
 | `deploy run <config.qc>…` | Deploy. Several config files run serially; the first failure stops the rest. |
 | `deploy preview <config.qc>` | Ask the server what would be uploaded and what server-side files would be deleted. |
 | `deploy preview-deploy-files <config.qc>` | List the local files a deploy would include. Does not contact the server. |
@@ -124,6 +135,7 @@ ignore data
 Then:
 
 ```bash
+deploy auth-scopes    my-app.qc --resource my-app-staging
 deploy create-project my-app --resource my-app-staging --override-dest https://apf1.dev
 deploy preview my-app.qc
 deploy run     my-app.qc

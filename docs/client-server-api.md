@@ -38,8 +38,8 @@ type DeploymentTags = Record<string, string>;
 
 Every method's required action and how the call resolves to a project come from
 `METHOD_TABLE` in `rpc.rs`, which is the same table the server authorizes
-against. The scope a key must hold is `deploy:<resource>:<action>`, where
-`<resource>` is the project's binding on that instance (see
+against. The scope a key must hold is `<resource>:<action>` — exactly two segments,
+action last — where `<resource>` is the project's binding on that instance (see
 [auth-integration.md](auth-integration.md)).
 
 | Method | Action | Resolved by |
@@ -62,7 +62,7 @@ against. The scope a key must hold is `deploy:<resource>:<action>`, where
 | `previewByDeployName` | `read` | `deployName` |
 | `downloadFile` | `read` | `projectName` |
 | `listDatabases` | `read` | `projectName` |
-| `executeSql` | `sql` | `projectName` |
+| `executeSql` | `execute-sql` | `projectName` |
 | `rollback` | `rollback` | `projectName` |
 
 A `deployName` resolves through `deployment.deploy_name → project_name`. A
@@ -84,7 +84,6 @@ instance and binds it to an auth-center resource.
     resourceName: string;
     outcome: 'created' | 'rebound' | 'unchanged';
     previousResourceName?: string;
-    resourceVerified: boolean;
 }
 ```
 
@@ -96,9 +95,17 @@ project without `rebind` is an error: repointing a project hands its deploy
 rights to a different set of keys, so it is never implicit. Every change writes
 a row to `project_resource_binding_history`, with the key that made it.
 
-`resourceVerified` is false whenever the server could not confirm the resource
-exists — today that is always, because auth-center has no resource registry.
-The CLI prints a warning saying so.
+`resourceName` must not contain `:`. A scope is `<resource>:<action>`, so a
+colon here would produce a three-segment scope that auth-center refuses to mint
+a key for; the server rejects it rather than registering a project no key can
+ever satisfy. The CLI checks the same thing locally first.
+
+The server does **not** verify that the resource exists in auth-center. There is
+no service-to-service endpoint that could answer, and resources are derived
+rather than declared, so at registration time the resource usually does not
+exist yet. See "R1's resource-existence check" in
+[auth-integration.md](auth-integration.md). After registering, the CLI prints
+the `auth-setup` commands that create the role and key for this resource.
 
 ### createDeployment
 
@@ -307,8 +314,9 @@ must name one of the configured databases. `callerIsAgent` is set by the client
 when it detects it is running inside a coding agent; the server refuses the
 query if the target database is marked `agent-sql-access-blocked`.
 
-`executeSql` requires the `sql` action, which is granted separately from
-`deploy` — a CI key that ships builds cannot run arbitrary SQL.
+`executeSql` requires the `execute-sql` action (scope
+`<resource>:execute-sql`), which is granted separately from `deploy` — a CI key
+that ships builds cannot run arbitrary SQL.
 
 ## Deployment flow
 
@@ -352,7 +360,7 @@ key table and no path that skips the check. The decision, in order:
    `deployment.deploy_name → project_name` for a `deployName`. `createProject`
    resolves to the instance's administration resource instead.
 3. Look up that project's row in `project_resource_binding`.
-4. Introspect the key against `deploy:<resource>:<action>` at auth-center.
+4. Introspect the key against `<resource>:<action>` at auth-center.
 
 Anything that goes wrong denies: unknown method, unresolvable deploy name,
 unregistered project, project with no binding, empty binding, network error,
@@ -363,6 +371,19 @@ server's `allowed ?? true` fallback is gone.
 Positive verdicts are cached for 30 s keyed by `sha256(key) | resource |
 action`; negative verdicts are never cached, so a revocation takes effect
 within that window at worst.
+
+A denial answers HTTP 401 with a JSON-RPC error whose `message` is
+`Unauthorized`. Its `data` field carries a detail string **only when the key was
+active and merely lacked the scope**:
+
+```json
+{"code": -32001, "message": "Unauthorized",
+ "data": "this key does not hold hotlaps-api-staging:deploy"}
+```
+
+An unknown, revoked or expired key gets no `data` at all, so it cannot
+enumerate this instance's project → resource bindings by guessing. The full
+reason is always in the server's journal.
 
 `deploy-server serve --disable-api-key-check` skips all of it. Local
 development only; the startup banner prints a boxed warning when it is set.

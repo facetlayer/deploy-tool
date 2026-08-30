@@ -17,6 +17,7 @@ crates/deploy-core/    shared library, no binary
   security.rs          client-side scan that blocks .env / keys / credentials
   sqlnames.rs          table-name extraction, for routing `deploy sql`
   rpc.rs               wire types, method names, the authorization action table
+                       (METHOD_TABLE, Action, scope_string)
 
 crates/deploy-server/  binary `deploy-server`
   server.rs            HTTP + JSON-RPC transport; authorizes, then dispatches
@@ -30,6 +31,8 @@ crates/deploy-server/  binary `deploy-server`
 crates/deploy-cli/     binary `deploy`
   main.rs              clap command tree
   commands/            one module per subcommand
+                       auth_scopes.rs derives the scopes/auth-setup commands
+                       from METHOD_TABLE; create_project.rs reuses it
   rpc_client.rs        JSON-RPC client
   api_key.rs           key resolution: secrets-file → env → ~/secrets/deploy.env
 
@@ -87,9 +90,9 @@ plain `insert into … select`.
 
 ## Tests
 
-266 tests as of 2026-08-29: 93 in `deploy-core`, 87 + 19 + 12 in
+276 tests as of 2026-08-29: 94 in `deploy-core`, 84 + 22 + 12 in
 `deploy-server` (unit, `tests/authorization.rs`, `tests/deployment_flow.rs`),
-44 + 11 in `deploy-cli` (unit, `tests/cli_end_to_end.rs`).
+53 + 11 in `deploy-cli` (unit, `tests/cli_end_to_end.rs`).
 
 ```bash
 cargo test --workspace          # whole workspace
@@ -115,13 +118,22 @@ rather than just the return values. Follow that pattern for new handlers.
 - Comments explain why, not what. The hazards worth a comment are the ones that
   have already cost something: the path-traversal guards in `paths.rs`, the
   missing-`ignore` DB wipe (hotlaps, 2026-05-23), picomatch's dotfile
-  semantics, and the `allowed ?? true` fallback the auth rewrite removed.
+  semantics, the `allowed ?? true` fallback the auth rewrite removed, and the
+  scope grammar in `rpc.rs::scope_string` (two segments, action last — the
+  three-segment form auth-center rejects comes back with a *suggested fix* that
+  is valid and wrong).
 
 ## Things that are deliberately not done
 
-- No resource-existence check at `createProject` beyond a best-effort probe —
-  auth-center has no resource registry yet. See "Known gap" in
-  docs/auth-integration.md before trying to fix it.
+- No resource-existence check at `createProject`, and no code that attempts one.
+  auth-center exposes resources only under `/admin/api/resources`, gated on
+  `auth:admin` — a scope that can mint any key in any project, which a deploy
+  instance must never hold — and resources are derived rather than declared, so
+  at registration time the resource usually does not exist yet. The decided
+  answer is check-at-first-use: `create-project` rejects a `:` in the resource
+  name and prints the `auth-setup` commands, and a denial names the scope that
+  was checked. See "R1's resource-existence check" in docs/auth-integration.md
+  before trying to add one back.
 - No local key table, and no flag that brings one back. R6 removed
   `secret_key` outright, so there is no fallback to add a bypass to; every
   caller authenticates against auth-center, and an instance without all three

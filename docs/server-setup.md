@@ -73,9 +73,9 @@ They live in the instance's `EnvironmentFile` (`/root/secrets/deploy.env`,
 
 | Variable | Meaning |
 |---|---|
-| `DEPLOY_AUTH_URL` | auth-center base URL, e.g. `https://auth.apf1.dev`. Never hardcoded; each instance gets its own. |
+| `DEPLOY_AUTH_URL` | auth-center base URL, `https://$AUTH_HOST`. Never hardcoded, and deliberately not written down here — the hostname is a deployment detail; each instance gets its own setting. |
 | `DEPLOY_AUTH_KEY` | This instance's own auth-center service key, holding `auth:introspect`. Each instance gets its own so they can be revoked independently. |
-| `DEPLOY_ADMIN_RESOURCE` | This instance's administration resource, e.g. `deploy-do2`. It is what `createProject` is checked against. No default and no derivation from the hostname. |
+| `DEPLOY_ADMIN_RESOURCE` | This instance's administration resource: `do2-deploy` on do2, `dohl-deploy` on dohl. It is what `createProject` is checked against, as `<this value>:create-project`. No default and no derivation from the hostname. The requirements' config table omits this variable; it is a deliberate addition, because `createProject` resolves to no project and so has nothing else to be authorized against. |
 
 `DEPLOY_STATE_DIR` is the one optional variable (§3).
 
@@ -87,10 +87,10 @@ journal shows what a running instance is actually doing.
 exists for local development and the test suite. It is not a migration path and
 must never be set on do2 or dohl.
 
-The authorization model itself — the `deploy:<resource>:<action>` scope format,
-the action table, caching, and what happens when auth-center is unreachable —
-is in [auth-integration.md](auth-integration.md). Do not restate it in an
-operational runbook; mint keys against that document.
+The authorization model itself — the `<resource>:<action>` scope format, the
+action table, caching, and what happens when auth-center is unreachable — is in
+[auth-integration.md](auth-integration.md). Do not restate it in an operational
+runbook; mint keys against that document.
 
 ## 5. Run it
 
@@ -123,26 +123,46 @@ reachable directly. Keep that in mind when picking a port.
 
 ## 6. Keys and project registration
 
-Every key comes from the auth-center dashboard, granted the exact scope strings
-from [auth-integration.md](auth-integration.md):
+Every key is created with `auth-setup`, which runs from a laptop holding no
+credential: it prints an approval URL and a confirmation code, opens a browser,
+and blocks until an admin approves. There is no `deploy-server create-key` and
+no local key table; a key cannot be minted on the host.
 
-- `deploy:deploy-do2:create-project` — to register projects on do2.
-- `deploy:<resource>:deploy` — a CI key that ships to one resource.
-- `deploy:<resource>:read` — an on-call key that can only look.
-- `deploy:<resource>:*` — everything on one resource, including `sql`.
+A scope is `<resource>:<action>` — exactly two segments, action last. The
+strings this instance needs:
 
-There is no `deploy-server create-key` and no local key table; a key cannot be
-minted on the host.
+- `do2-deploy:create-project` — to register projects on do2 (`dohl-deploy:…`
+  on dohl). This is the instance's `DEPLOY_ADMIN_RESOURCE`.
+- `<resource>:deploy` — a CI key that ships to one resource.
+- `<resource>:read` — an on-call key that can only look.
+- `<resource>:*` — everything on one resource, including `execute-sql`. `*`
+  does not cross `:`, so it cannot reach another resource.
+
+Do not write these by hand. `deploy auth-scopes <config.qc> --resource <name>`
+prints the exact `auth-setup create-role` / `create-key` lines for a project;
+`deploy create-project` prints the same block after registering. The reason is
+specific: auth-center rejects a three-segment scope like
+`deploy:hotlaps-api-staging:deploy` and *suggests* `deploy-hotlaps-api-staging:deploy`,
+which is valid, mints cleanly, and names a resource this server will never ask
+about. See [auth-integration.md](auth-integration.md).
+
+The instance's administration resource belongs to the "Server Admin" auth-center
+project; each application's deploy resources belong to that application's own
+project. Resource names are global, so run `auth-service check-conflicts` on the
+auth host after creating them.
 
 With an admin key in hand, register every project on the instance:
 
 ```bash
-deploy create-project hotlaps-api --resource hotlaps-staging --override-dest https://apf1.dev
+deploy create-project hotlaps-api --resource hotlaps-api-staging --override-dest https://apf1.dev
 ```
 
-Until a project is registered and bound, every call naming it is denied —
-including reads. Repointing an already-bound project at a different resource
-needs `--rebind` and is written to the instance's binding history.
+Resources are per-project-per-environment, and the binding lives in this
+instance's database: do2's `hotlaps-api` binds to `hotlaps-api-staging`, dohl's
+to `hotlaps-api-prod`. Until a project is registered and bound, every call
+naming it is denied — including reads. Repointing an already-bound project at a
+different resource needs `--rebind` and is written to the instance's binding
+history.
 
 ## 7. Cutover
 
@@ -151,8 +171,9 @@ a gradual migration. From the Rollout section of the auth-center requirements,
 per instance:
 
 1. Land the resource model and the resolution path.
-2. Create the resources and issue keys in auth-center, including this
-   instance's own `auth:introspect` service key.
+2. Create the projects, roles and keys with `auth-setup`, including this
+   instance's own `auth:introspect` service key. Generate the scope strings with
+   `deploy auth-scopes`, and run `auth-service check-conflicts` afterwards.
 3. Register every project against its resource, and distribute the new keys to
    every caller that needs one — CI secrets, `~/secrets/deploy.env`, and so on.
    Do this **before** the cutover. A caller holding no valid key at cutover
@@ -214,4 +235,9 @@ deploy preview <some-project>.qc                                # before any rea
 ```
 
 A denied call answers HTTP 401 and logs `[deploy auth] denied "<method>": …` on
-the server; the reason is deliberately not returned to the client.
+the server. The full reason stays in the journal. The client is told only
+`Unauthorized`, except in two cases: a key that is real but lacks the scope is
+told which scope (`this key does not hold hotlaps-api-staging:deploy`), and an
+unreachable auth-center is named coarsely so a cutover failure is not silent. An
+unknown or revoked key learns nothing, so it cannot enumerate this instance's
+project-to-resource bindings.

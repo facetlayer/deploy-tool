@@ -12,7 +12,8 @@ WorkingDirectory=/root
 # /root/.local/state/deploy/db.sqlite. Set DEPLOY_STATE_DIR in the env file
 # only if you mean to point the instance somewhere else.
 
-# Carries DEPLOY_AUTH_URL, DEPLOY_AUTH_KEY and DEPLOY_ADMIN_RESOURCE, all three
+# Carries DEPLOY_AUTH_URL, DEPLOY_AUTH_KEY and DEPLOY_ADMIN_RESOURCE (this
+# instance's administration resource: do2-deploy or dohl-deploy), all three
 # of which are required — the server exits at startup if any is missing, so a
 # half-filled env file shows up here as a unit restarting in a loop with the
 # missing variable named in the journal. Secrets stay OUT of this

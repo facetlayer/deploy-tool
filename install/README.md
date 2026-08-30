@@ -8,7 +8,7 @@ refers to.
 |---|---|---|
 | `build-release.sh` | — | Cross-compiles for `x86_64-unknown-linux-gnu.2.39` with `cargo zigbuild`. Ubuntu 24.04, no Rust toolchain on the droplets. |
 | `deploy-server.service` | `/etc/systemd/system/deploy-server.service` | `Type=simple`, `Restart=always`, port 4715, secrets via `EnvironmentFile=`. Keep the copy in this repo as the source of truth and re-install after editing. |
-| `deploy.env.template` | `/root/secrets/deploy.env` | Root-owned, `0600`, created by hand over SSH. Carries the three required auth-center variables, including the secret `DEPLOY_AUTH_KEY`; never commit a filled-in copy. |
+| `deploy.env.template` | `/root/secrets/deploy.env` | Root-owned, `0600`, created by hand over SSH. Carries the three required auth-center variables, including the secret `DEPLOY_AUTH_KEY`; never commit a filled-in copy, and never write the auth host into the template. |
 
 ```bash
 install/build-release.sh
@@ -21,7 +21,13 @@ ssh root@host 'systemd-analyze verify /etc/systemd/system/deploy-server.service 
 
 `DEPLOY_AUTH_URL`, `DEPLOY_AUTH_KEY` and `DEPLOY_ADMIN_RESOURCE` are all
 required: the server refuses to start with any of them missing, so fill in the
-env file before enabling the unit.
+env file before enabling the unit. `DEPLOY_ADMIN_RESOURCE` is this instance's
+administration resource -- `do2-deploy` or `dohl-deploy` -- and `createProject`
+is authorized as `<that value>:create-project`.
+
+`DEPLOY_AUTH_KEY` is created with `auth-setup`, which runs from a laptop holding
+no credential and blocks on a browser approval; it must hold `auth:introspect`.
+Its plaintext is shown once, so paste it into the env file straight away.
 
 The existing hosts run the old server as unit `deploy` on the same port and
 against the same database (`/root/.local/state/deploy/db.sqlite`) — stop and
