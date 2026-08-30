@@ -194,21 +194,23 @@ auth-service create-key --project server-admin --name andy-laptop-admin \
 `serve`, `gen-secrets-key`, `create-admin`, `create-project`, `create-key`,
 `list-keys`, `revoke-key`, `check-conflicts`.
 
-Two gaps make the topology above tedious to stand up:
+Since then auth-center has added **`auth-setup`**, which covers projects,
+roles and keys from a laptop without any credential: it posts the proposed
+change, opens an approval page, and blocks until an admin signs in and confirms
+it. So scripting the topology is no longer the gap it was.
 
-- **There is no `create-role` command.** Roles exist only through the dashboard
-  (`PUT /admin/api/roles/:project/:name`), so the tidy way to bundle scopes is
-  the one way you cannot script.
+One gap remains:
+
 - **Resources cannot be created at all**, by design — a resource exists once
   something names it. So there is nothing to pre-declare, and a typo in a scope
   string silently creates a *new* resource rather than failing.
 
-That second point is the real hazard. `hotlaps-api-stagng:deploy` is a
-perfectly valid scope naming a resource that now exists and that nothing will
-ever check against. Nothing catches it at write time; it surfaces as a deploy
+That is the real hazard. `hotlaps-api-stagng:deploy` is a perfectly valid
+scope naming a resource that now exists and that nothing will ever check
+against. Nothing catches it at write time; it surfaces as a deploy
 that is denied for no visible reason.
 
-Three tiers of tooling, in the order worth building them.
+Two tiers of tooling, in the order worth building them.
 
 **Tier 1 — generate the strings, never hand-write them.** No new privilege, no
 auth-service work, useful immediately.
@@ -217,29 +219,24 @@ auth-service work, useful immediately.
   needs, derived from the same `METHOD_TABLE` the server authorizes against —
   so what you paste into the dashboard is what the server will ask for, by
   construction.
-- `deploy create-project` ends by printing the ready-to-run `auth-service
-  create-key` command and the dashboard steps for the role, naming which
-  auth-service project to declare them in.
+- `deploy create-project` ends by printing the ready-to-run `auth-setup
+  create-role` and `auth-setup create-key` commands, naming which auth-service
+  project to declare them in.
 
 This closes the typo hazard for the common path, because the string is copied
 rather than retyped.
 
-**Tier 2 — make the topology declarative.** Small auth-service additions:
-`create-role`, and a `bootstrap --from-file` taking a YAML/JSON description of
-projects, roles, keys and their scopes. The topology then lives in git, is
-reviewable, and is reproducible on a rebuilt auth host. This is where the
-lasting value is, and it is auth-service work rather than deploy work.
-
-**Tier 3 — drive the admin API from the deploy CLI.** A `deploy auth create-key`
+**Tier 2 — drive the admin API from the deploy CLI.** A `deploy auth create-key`
 that calls `POST /admin/api/keys` directly. Convenient, and a real privilege
 trade: it needs `auth:admin`, which can mint any key in any project. The
 requirements are explicit that a deploy *instance* must never hold that scope.
 A human's laptop key is a different question, but it is still a credential that
 can grant anything, so it should be a deliberate choice rather than a
-convenience that arrives with a subcommand.
+convenience that arrives with a subcommand. `auth-setup` does the same job
+without the privilege, which is the argument for not building this at all.
 
-Recommendation: build Tier 1 as part of this work, propose Tier 2 to
-auth-center, and leave Tier 3 alone unless the manual path proves genuinely
+Recommendation: build Tier 1 as part of this work, use `auth-setup` for the
+rest, and leave Tier 2 alone unless the approval flow proves genuinely
 painful.
 
 ## Out of scope
