@@ -319,13 +319,13 @@ fn deploying_an_unregistered_project_is_refused() {
     let run = workspace
         .deploy(CI_KEY)
         .expect_failure("deploy run against an unregistered project");
-    // No binding to name, so the denial stays bare — an unregistered project
-    // must not be a way to learn anything about this instance.
-    assert!(
-        run.output().contains("denied: Unauthorized"),
-        "{}",
-        run.output()
-    );
+    // The denial names the project the caller themselves supplied and says what
+    // to do about it. This is the first thing anyone meets on an instance that
+    // has been cut over but not yet had its projects registered, and a bare
+    // "Unauthorized" would leave them nothing to act on.
+    let output = run.output();
+    assert!(output.contains("is not registered"), "{output}");
+    assert!(output.contains("create-project"), "{output}");
 }
 
 /// A dropped or missing key must not fall back to anything. The workspace's

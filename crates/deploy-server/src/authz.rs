@@ -99,6 +99,14 @@ impl Denial {
                 scope,
                 ..
             } => Some(format!("this key does not hold {scope}")),
+            // Resolution failures name only things the caller just supplied — the
+            // project or deploy name in their own request — so echoing them back
+            // discloses nothing they did not already know, and it is the
+            // difference between a diagnosable cutover and an opaque one: an
+            // instance that has not yet registered a project refuses every call
+            // for it, and "Unauthorized" alone gives an operator nothing to act
+            // on.
+            Denial::Unresolved(detail) => Some(detail.clone()),
             Denial::AuthUnavailable(_) => Some(
                 "this deploy server could not get a verdict from auth-center, so it denied \
                  the call; it is misconfigured or auth-center is unreachable. See the \
@@ -221,7 +229,8 @@ fn resource_of_project(
 
     if !registered {
         return Err(Denial::Unresolved(format!(
-            "{}: project '{project_name}' is not registered on this instance",
+            "{}: project '{project_name}' is not registered on this instance; \
+             run `deploy create-project {project_name} --resource <name>`",
             spec.name
         )));
     }
