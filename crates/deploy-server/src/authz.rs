@@ -6,7 +6,7 @@
 //!    joined through the `deployment` table, or the instance administration
 //!    resource for `createProject`.
 //! 2. Look up the project's binding in `project_resource_binding`.
-//! 3. Introspect the presented key against `deploy:<resource>:<action>`.
+//! 3. Introspect the presented key against `<resource>:<action>`.
 //! 4. Deny on any failure.
 //!
 //! There is deliberately no branch that allows a call because no resource could
@@ -301,7 +301,7 @@ mod tests {
 
         let sent = stub.requests();
         assert_eq!(sent.len(), 1);
-        assert_eq!(sent[0]["scope"], "deploy:hotlaps-staging:deploy");
+        assert_eq!(sent[0]["scope"], "hotlaps-staging:deploy");
         assert_eq!(sent[0]["token"], "presented");
     }
 
@@ -320,7 +320,7 @@ mod tests {
         )
         .expect("should be allowed");
 
-        assert_eq!(stub.requests()[0]["scope"], "deploy:hotlaps-staging:deploy");
+        assert_eq!(stub.requests()[0]["scope"], "hotlaps-staging:deploy");
     }
 
     #[test]
@@ -336,22 +336,19 @@ mod tests {
         )
         .expect("should be allowed");
 
-        assert_eq!(
-            stub.requests()[0]["scope"],
-            "deploy:deploy-test:create-project"
-        );
+        assert_eq!(stub.requests()[0]["scope"], "deploy-test:create-project");
     }
 
     #[test]
-    fn the_action_is_part_of_the_scope_so_sql_is_separately_grantable() {
+    fn the_action_is_part_of_the_scope_so_execute_sql_is_separately_grantable() {
         let conn = test_db();
         register(&conn, "hotlaps-api", Some("hotlaps-staging"));
         let (stub, auth) = allow_everything();
 
         for (method, expected) in [
-            (methods::LIST_DEPLOYMENTS, "deploy:hotlaps-staging:read"),
-            (methods::EXECUTE_SQL, "deploy:hotlaps-staging:sql"),
-            (methods::ROLLBACK, "deploy:hotlaps-staging:rollback"),
+            (methods::LIST_DEPLOYMENTS, "hotlaps-staging:read"),
+            (methods::EXECUTE_SQL, "hotlaps-staging:execute-sql"),
+            (methods::ROLLBACK, "hotlaps-staging:rollback"),
         ] {
             authorize(
                 &ctx(&conn, &auth),

@@ -97,7 +97,7 @@ fn print_auth_summary(config: &AuthCenterConfig, disable_api_key_check: bool) {
     } else {
         println!("  auth-center:      {}", config.base_url);
         println!("  admin resource:   {}", config.admin_resource);
-        println!("  every call is checked against deploy:<resource>:<action>");
+        println!("  every call is checked against <resource>:<action>");
     }
     println!("---------------------");
 }

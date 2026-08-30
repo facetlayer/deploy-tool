@@ -398,14 +398,14 @@ pub mod methods {
 // Authorization table
 // ---------------------------------------------------------------------------
 
-/// The five actions from R3. `sql` is separate from `deploy` on purpose: a CI
-/// key that ships builds must not be able to run arbitrary SQL.
+/// The five actions from R3. `execute-sql` is separate from `deploy` on
+/// purpose: a CI key that ships builds must not be able to run arbitrary SQL.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Action {
     Deploy,
     Read,
-    Sql,
+    ExecuteSql,
     Rollback,
     CreateProject,
 }
@@ -418,7 +418,7 @@ impl Action {
         match self {
             Action::Deploy => "deploy",
             Action::Read => "read",
-            Action::Sql => "sql",
+            Action::ExecuteSql => "execute-sql",
             Action::Rollback => "rollback",
             Action::CreateProject => "create-project",
         }
@@ -431,11 +431,20 @@ impl std::fmt::Display for Action {
     }
 }
 
-/// D1: resource and action encode into one flat auth-center scope string,
-/// `deploy:<resource>:<action>`. auth-center's matcher stops `*` at a `:`, so
-/// `deploy:hotlaps-staging:*` cannot reach another resource.
+/// D1: an auth-center scope is `<resource>:<action>` — exactly two segments,
+/// the action last. auth-center's `validate_scope` rejects anything else
+/// (`secrets:<path>:<action>` is the sole exception), so there is no namespace
+/// to put a `deploy:` prefix in; grouping belongs in the resource *name*, which
+/// is why an instance's admin resource is `do2-deploy` rather than `deploy:do2`.
+///
+/// The matcher stops `*` at a `:`, so `hotlaps-staging:*` grants every action
+/// on that one resource and cannot reach another.
+///
+/// Note the shape that is wrong but still *validates*: `deploy:hotlaps-staging`
+/// is two legal segments meaning resource `deploy`, action `hotlaps-staging`.
+/// auth-center cannot catch that, so the order here is our responsibility.
 pub fn scope_string(resource_name: &str, action: Action) -> String {
-    format!("deploy:{}:{}", resource_name, action.as_str())
+    format!("{}:{}", resource_name, action.as_str())
 }
 
 /// How a call is resolved to the project whose resource binding gates it.
@@ -554,7 +563,7 @@ pub const METHOD_TABLE: &[MethodSpec] = &[
     // sql
     spec(
         methods::EXECUTE_SQL,
-        Action::Sql,
+        Action::ExecuteSql,
         ProjectResolution::ByProjectName,
     ),
     // rollback: params carry both names, and projectName is authoritative —
@@ -656,7 +665,7 @@ mod tests {
         // A deploy key must not reach SQL or rollback.
         assert_eq!(
             lookup_method(methods::EXECUTE_SQL).unwrap().action,
-            Action::Sql
+            Action::ExecuteSql
         );
         assert_eq!(
             lookup_method(methods::ROLLBACK).unwrap().action,
@@ -699,17 +708,42 @@ mod tests {
     #[test]
     fn scope_strings_match_the_documented_format() {
         assert_eq!(
-            scope_string("hotlaps-staging", Action::Deploy),
-            "deploy:hotlaps-staging:deploy"
+            scope_string("hotlaps-api-staging", Action::Deploy),
+            "hotlaps-api-staging:deploy"
         );
         assert_eq!(
-            scope_string("hotlaps-prod", Action::Read),
-            "deploy:hotlaps-prod:read"
+            scope_string("hotlaps-api-prod", Action::Read),
+            "hotlaps-api-prod:read"
         );
         assert_eq!(
-            scope_string("deploy-do2", Action::CreateProject),
-            "deploy:deploy-do2:create-project"
+            scope_string("hotlaps-api-staging", Action::ExecuteSql),
+            "hotlaps-api-staging:execute-sql"
         );
+        assert_eq!(
+            scope_string("do2-deploy", Action::CreateProject),
+            "do2-deploy:create-project"
+        );
+    }
+
+    /// auth-center's `validate_scope` requires exactly two segments, the action
+    /// last. A third segment is refused at write time, so a scope this function
+    /// can emit but no key can hold would deny every call on that resource.
+    /// Pinned across the whole table so it cannot regress one action at a time.
+    #[test]
+    fn every_scope_this_emits_has_exactly_two_segments() {
+        for spec in METHOD_TABLE {
+            let scope = scope_string("some-resource", spec.action);
+            assert_eq!(
+                scope.split(':').count(),
+                2,
+                "{} emits {scope:?}, which auth-center would reject",
+                spec.name
+            );
+            assert!(
+                scope.ends_with(spec.action.as_str()),
+                "the action must be the last segment: {scope:?}"
+            );
+        }
     }
 
     #[test]

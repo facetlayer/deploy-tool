@@ -6,7 +6,7 @@
 //! name can require different resources on different instances (do2's
 //! `hotlaps-api` binds to `hotlaps-staging`, dohl's to `hotlaps-prod`).
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use deploy_core::rpc::*;
 
 use crate::api_key::find_api_key;
@@ -22,6 +22,16 @@ pub fn create_project(
     // yet — so the destination has to be given explicitly.
     let dest_url = dest_url
         .ok_or_else(|| anyhow!("create-project needs a destination: pass --override-dest <url>"))?;
+
+    // Checked here too, so the mistake costs a local error rather than a round
+    // trip. The server enforces it as well; this is the friendlier message.
+    if resource_name.contains(':') {
+        bail!(
+            "--resource must not contain ':' (got {resource_name:?}).\n\
+             A scope is <resource>:<action>, so grouping goes in the resource \
+             name itself — \"do2-deploy\", not \"deploy:do2\"."
+        );
+    }
 
     let mut client = RpcClient::new(dest_url);
     match find_api_key(None) {
@@ -61,10 +71,19 @@ pub fn create_project(
         "  deploy scope: {}",
         scope_string(&result.resource_name, Action::Deploy)
     );
+    // Derived from the same Action set the server authorizes against, so this
+    // list cannot drift from what a key actually needs.
+    let actions = [
+        Action::Deploy,
+        Action::Read,
+        Action::ExecuteSql,
+        Action::Rollback,
+    ]
+    .map(|action| action.as_str())
+    .join(", ");
     println!(
-        "  keys for this project must hold deploy:{}:<action>, where <action> is one of \
-         deploy, read, sql, rollback",
-        result.resource_name
+        "  keys for this project must hold {}:<action>, where <action> is one of {}",
+        result.resource_name, actions
     );
 
     if !result.resource_verified {

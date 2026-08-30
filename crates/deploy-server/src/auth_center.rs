@@ -172,7 +172,7 @@ impl AuthCenter {
     }
 
     /// Asks auth-center whether `presented_key` holds
-    /// `deploy:<resource>:<action>`.
+    /// `<resource>:<action>`.
     ///
     /// Accepts only on 2xx AND `active == true` AND `allowed == true`.
     /// Everything else denies: network error, timeout, non-2xx, a missing
@@ -414,7 +414,7 @@ pub(crate) mod tests {
     #[test]
     fn scope_and_action_are_part_of_the_cache_key() {
         let a = cache_key_for("k", "hotlaps-staging", Action::Deploy);
-        let b = cache_key_for("k", "hotlaps-staging", Action::Sql);
+        let b = cache_key_for("k", "hotlaps-staging", Action::ExecuteSql);
         let c = cache_key_for("k", "hotlaps-prod", Action::Deploy);
         let d = cache_key_for("other", "hotlaps-staging", Action::Deploy);
         assert_ne!(a, b);
@@ -621,7 +621,7 @@ pub(crate) mod tests {
                 name: Some("ci".to_string()),
             })
         );
-        assert_eq!(stub.requests()[0]["scope"], "deploy:hotlaps-staging:deploy");
+        assert_eq!(stub.requests()[0]["scope"], "hotlaps-staging:deploy");
     }
 
     /// Environment variables are process-global, so serialize the tests that

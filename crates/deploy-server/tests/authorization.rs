@@ -31,13 +31,13 @@ fn standard_grants() -> Vec<KeyGrant> {
         grant(
             ADMIN_KEY,
             &[
-                "deploy:*:create-project",
+                "*:create-project",
                 // So the fixtures can be set up without a second flow.
-                "deploy:hotlaps-staging:**",
+                "hotlaps-staging:**",
             ],
         ),
-        grant(CI_KEY, &["deploy:hotlaps-staging:deploy"]),
-        grant(OTHER_KEY, &["deploy:unrelated-prod:deploy"]),
+        grant(CI_KEY, &["hotlaps-staging:deploy"]),
+        grant(OTHER_KEY, &["unrelated-prod:deploy"]),
     ]
 }
 
@@ -76,7 +76,7 @@ fn a_key_holding_the_deploy_action_can_run_the_whole_flow() {
     ];
 
     // Every step of upload and activation, on a key that carries only
-    // `deploy:hotlaps-staging:deploy`.
+    // `hotlaps-staging:deploy`.
     let deploy_name = deploy(
         &ci,
         "hotlaps-api",
@@ -91,7 +91,7 @@ fn a_key_holding_the_deploy_action_can_run_the_whole_flow() {
     // Every scope this flow asked about names the bound resource — never the
     // client-supplied project name.
     let asked = stub.scopes_asked();
-    assert!(asked.iter().any(|s| s == "deploy:hotlaps-staging:deploy"));
+    assert!(asked.iter().any(|s| s == "hotlaps-staging:deploy"));
     assert!(
         !asked.iter().any(|s| s.contains("hotlaps-api")),
         "the project name must never reach auth-center as a resource: {asked:?}"
@@ -127,7 +127,7 @@ fn positive_verdicts_are_cached_so_a_deploy_is_not_one_call_per_file() {
     let deploy_scope_calls = stub
         .scopes_asked()
         .iter()
-        .filter(|s| *s == "deploy:hotlaps-staging:deploy")
+        .filter(|s| *s == "hotlaps-staging:deploy")
         .count();
     assert!(
         deploy_scope_calls < 10,
@@ -221,7 +221,7 @@ fn every_method(deploy_name: &str) -> Vec<(&'static str, Json)> {
 /// server sent no scope for those calls, got no `allowed` back, and its
 /// `allowed ?? true` fallback accepted every active key — so any valid key from
 /// any project could overwrite files in, and activate, someone else's
-/// deployment. Here a key that holds `deploy:unrelated-prod:deploy` and nothing
+/// deployment. Here a key that holds `unrelated-prod:deploy` and nothing
 /// on `hotlaps-staging` must be refused by all twenty methods.
 #[test]
 fn a_key_for_another_resource_is_denied_on_every_method_including_deploy_name_only_ones() {
@@ -261,7 +261,7 @@ fn a_key_for_another_resource_is_denied_on_every_method_including_deploy_name_on
     assert!(
         asked
             .iter()
-            .filter(|scope| *scope == "deploy:hotlaps-staging:deploy")
+            .filter(|scope| *scope == "hotlaps-staging:deploy")
             .count()
             >= 9,
         "every deployName-only method should have been checked against the \
@@ -309,8 +309,8 @@ fn a_deploy_key_cannot_run_sql_because_the_action_is_separately_grantable() {
     assert_eq!(
         stub.scopes_asked(),
         vec![
-            "deploy:hotlaps-staging:sql".to_string(),
-            "deploy:hotlaps-staging:read".to_string(),
+            "hotlaps-staging:execute-sql".to_string(),
+            "hotlaps-staging:read".to_string(),
         ]
     );
 }
@@ -328,7 +328,7 @@ fn create_project_is_checked_against_the_instance_administration_resource() {
     );
     assert_eq!(
         stub.scopes_asked(),
-        vec!["deploy:deploy-test:create-project".to_string()]
+        vec!["deploy-test:create-project".to_string()]
     );
 
     server.client(ADMIN_KEY).ok(
@@ -516,10 +516,7 @@ fn a_non_2xx_from_auth_center_denies() {
 fn a_response_without_allowed_denies() {
     let root = TempRoot::new("authz-no-allowed");
     let server = instance_with_failing_auth(&root, || {
-        StubReply::json(
-            200,
-            r#"{"active":true,"key_id":"key_1","scopes":["deploy:**"]}"#,
-        )
+        StubReply::json(200, r#"{"active":true,"key_id":"key_1","scopes":["**"]}"#)
     });
     server.client(CI_KEY).denied(
         "createDeployment",
@@ -596,9 +593,9 @@ fn the_same_project_name_on_two_instances_gives_different_verdicts() {
     let prod_root = TempRoot::new("authz-dohl");
 
     let stub = start_stub_auth_center(granting(vec![
-        grant(ADMIN_KEY, &["deploy:*:create-project"]),
-        grant("staging-ci", &["deploy:hotlaps-staging:deploy"]),
-        grant("prod-ci", &["deploy:hotlaps-prod:deploy"]),
+        grant(ADMIN_KEY, &["*:create-project"]),
+        grant("staging-ci", &["hotlaps-staging:deploy"]),
+        grant("prod-ci", &["hotlaps-prod:deploy"]),
     ]));
 
     let do2 = DeployServer::start(

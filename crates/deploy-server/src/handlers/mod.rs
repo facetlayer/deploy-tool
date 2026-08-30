@@ -410,6 +410,22 @@ mod tests {
         assert!(err.contains("resourceName is required"), "{err}");
     }
 
+    /// auth-center rejects a three-segment scope, so a colon in the resource
+    /// name would produce a scope no key could ever hold — every call for this
+    /// project denied, with nothing obvious to point at.
+    #[test]
+    fn create_project_refuses_a_resource_name_containing_a_colon() {
+        let server = setup("create-project-colon");
+        let err = server
+            .call(
+                methods::CREATE_PROJECT,
+                json!({ "projectName": "hotlaps-api", "resourceName": "deploy:hotlaps-staging" }),
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("must not contain ':'"), "{err}");
+    }
+
     #[test]
     fn deploying_to_an_unregistered_project_is_refused() {
         let server = setup("r1-unregistered");

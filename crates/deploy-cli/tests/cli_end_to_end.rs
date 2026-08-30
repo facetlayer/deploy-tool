@@ -18,9 +18,9 @@ const RESOURCE: &str = "basic-staging";
 
 fn grants() -> Vec<KeyGrant> {
     vec![
-        grant(ADMIN_KEY, &["deploy:deploy-test:create-project"]),
-        grant(CI_KEY, &["deploy:basic-staging:**"]),
-        grant(OTHER_KEY, &["deploy:somewhere-else:**"]),
+        grant(ADMIN_KEY, &["deploy-test:create-project"]),
+        grant(CI_KEY, &["basic-staging:**"]),
+        grant(OTHER_KEY, &["somewhere-else:**"]),
     ]
 }
 

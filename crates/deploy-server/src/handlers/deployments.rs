@@ -43,6 +43,16 @@ pub fn create_project(
     if resource_name.is_empty() {
         return Err(anyhow!("resourceName is required"));
     }
+    // A scope is `<resource>:<action>` and auth-center rejects a third segment,
+    // so a colon here would produce a scope no key could ever be granted. Catch
+    // it at registration rather than as a mass denial at the next deploy.
+    if resource_name.contains(':') {
+        return Err(anyhow!(
+            "resourceName must not contain ':' (got {resource_name:?}); \
+             a scope is <resource>:<action>, so put any grouping in the name \
+             itself, e.g. \"do2-deploy\" rather than \"deploy:do2\""
+        ));
+    }
 
     let conn = state.db();
 

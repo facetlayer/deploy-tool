@@ -12,11 +12,11 @@ use serde_json::json;
 
 use common::*;
 
-/// A permissive laptop key, as `deploy:**` would be issued in auth-center.
+/// A permissive laptop key, as `**` would be issued in auth-center.
 const KEY: &str = "laptop-key";
 
 fn start(root: &TempRoot) -> (StubAuthCenter, DeployServer) {
-    let stub = start_stub_auth_center(granting(vec![grant(KEY, &["deploy:**"])]));
+    let stub = start_stub_auth_center(granting(vec![grant(KEY, &["**"])]));
     let server = DeployServer::start(
         root,
         ServerOptions {
