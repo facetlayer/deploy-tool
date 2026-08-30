@@ -166,6 +166,32 @@ history.
 
 ## 7. Cutover
 
+### The database upgrades in place — this is the tested path
+
+The rollout notes describe rebuilding an instance's database. Do not: pointing
+this server at the existing `db.sqlite` is what do2 actually did, and it keeps
+the operational state a rebuild throws away. On do2 that was 407 `deployment`
+rows and 27 `active_deployment` rows.
+
+On first start the server creates `project_resource_binding` and
+`project_resource_binding_history`, and adds `authorized_by_key_id` /
+`authorized_by_key_name` to the inherited `deployment` table. `project`,
+`deployment`, `active_deployment` and `next_deploy_id` keep their contents and
+their shape. The old `secret_key` table is left in place and never read — the
+keys in it are dead against this server.
+
+Back the database up first anyway:
+
+```bash
+cp /root/.local/state/deploy/db.sqlite /root/backups/db.sqlite.pre-rust-cutover
+cp /etc/systemd/system/deploy.service /root/backups/deploy.service.node-original
+```
+
+Rolling back is restoring that unit file and `systemctl daemon-reload &&
+systemctl restart deploy`. The two added tables and two added columns are inert
+to the old server.
+
+
 There is no legacy fallback, so enabling this on an instance is a cutover, not
 a gradual migration. From the Rollout section of the auth-center requirements,
 per instance:
@@ -186,7 +212,10 @@ per instance:
 Do do2 first and let it run clean for a while before cutting dohl over.
 Production is under no deadline.
 
-### Rebuilding the database discards live state
+### If you rebuild instead, you lose live state
+
+Kept for the case where a rebuild is genuinely wanted; the section above is the
+path do2 took and the one to prefer.
 
 The deploy database holds operational state as well as key material.
 `active_deployment` records which deployment is currently serving each project,
