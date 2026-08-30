@@ -1,0 +1,37 @@
+# Tests every push and pull request. The workspace is pure Rust and rusqlite is
+# `bundled`, so there is nothing to install beyond the toolchain.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          rustup component add rustfmt clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo fmt --all --check
+
+      # Advisory only. There are ~17 pre-existing warnings across 7 lints
+      # (needless_return, derivable_impls, match_like_matches_macro and friends)
+      # — all style, none of them bugs. Clear them, then drop the
+      # continue-on-error and add `-- -D warnings` to make this a real gate.
+      - run: cargo clippy --workspace --all-targets
+        continue-on-error: true
+
+      - run: cargo test --workspace
