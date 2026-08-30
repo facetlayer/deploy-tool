@@ -81,6 +81,14 @@ impl Denial {
     /// against at registration time. It is withheld from an unknown or revoked
     /// key, because that would let anyone holding a random string enumerate
     /// this instance's project-to-resource bindings.
+    ///
+    /// `AuthUnavailable` is told too, and deliberately: it is not a verdict
+    /// about the caller at all, and it names no binding, so the reasoning above
+    /// does not apply. It is also the failure an operator is most likely to
+    /// meet during a cutover, where the alternative is staring at a bare
+    /// "Unauthorized" while the real cause sits in a journal on a host they may
+    /// not be able to read. The detail is deliberately coarse — that the
+    /// instance could not reach auth-center, not the URL or the error.
     pub fn client_detail(&self) -> Option<String> {
         match self {
             Denial::NotAuthorized {
@@ -88,6 +96,11 @@ impl Denial {
                 scope,
                 ..
             } => Some(format!("this key does not hold {scope}")),
+            Denial::AuthUnavailable(_) => Some(
+                "this deploy server could not reach auth-center, so it denied the call; \
+                 see the server's journal for the reason"
+                    .to_string(),
+            ),
             _ => None,
         }
     }
