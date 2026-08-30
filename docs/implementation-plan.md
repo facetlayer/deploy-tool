@@ -182,22 +182,41 @@ and neither is resolved yet:
 
 ### W6 — Tooling for creating scopes and keys
 
-How this is done today, on the auth host:
+**`auth-setup`** is the answer, and it is already built and on PATH
+(`~/.cargo/bin/auth-setup`, workspace member `~/auth-center/setup-tool`):
 
 ```bash
-auth-service create-project server-admin --name 'Server Admin'
-auth-service create-key --project server-admin --name andy-laptop-admin \
-  --scope do2-deploy:create-project --scope dohl-deploy:create-project
+export AUTH_URL=https://$AUTH_HOST
+auth-setup create-project server-admin --name 'Server Admin'
+auth-setup create-role deployer --project server-admin \
+    --scope do2-deploy:create-project --scope dohl-deploy:create-project
+auth-setup create-key andy-laptop-admin --project server-admin --role deployer
 ```
 
-`create-key` prints the `ak_…` secret once and never again. The full CLI is
-`serve`, `gen-secrets-key`, `create-admin`, `create-project`, `create-key`,
-`list-keys`, `revoke-key`, `check-conflicts`.
+It holds **no credential**. Each command posts the proposed change, prints an
+approval URL and a confirmation code, opens the browser, and blocks; an admin
+signs in with their own session, types the code, and the change runs *as them* —
+the audit log and the key's `created_by` name the human, not the tool. This is
+RFC 8628's device authorization grant pointed at admin mutations, and it is
+strictly better than the `auth:admin` laptop key this plan previously
+contemplated.
 
-Since then auth-center has added **`auth-setup`**, which covers projects,
-roles and keys from a laptop without any credential: it posts the proposed
-change, opens an approval page, and blocks until an admin signs in and confirms
-it. So scripting the topology is no longer the gap it was.
+Details that matter for scripting it:
+
+- `--json` puts one result object on stdout and the approval link on stderr.
+  That is the form to use from an agent or a script.
+- `--no-open` skips launching a browser; `--timeout` overrides the 900s wait.
+- Requests are validated when made, so a bad scope or unknown project fails
+  immediately rather than after a wasted trip to the browser.
+- Requests expire after 15 minutes, and a `create-key` plaintext is wiped the
+  moment the tool collects it. A tool that dies in that window has lost the
+  key — revoke it and ask again.
+- Anything but approval exits non-zero.
+
+**It is not live on do2 yet.** The `/setup/*` endpoints are in the code but the
+backend has not been redeployed since; `~/auth-center/docs/handoff.md` marks it
+"Not yet deployed — needs a `deploy run deploy/api.qc`". That redeploy uses the
+*old* deploy tool, and is a prerequisite for the sequence below.
 
 One gap remains:
 
@@ -238,6 +257,102 @@ without the privilege, which is the argument for not building this at all.
 Recommendation: build Tier 1 as part of this work, use `auth-setup` for the
 rest, and leave Tier 2 alone unless the approval flow proves genuinely
 painful.
+
+## Next steps, in order
+
+Steps 1–4 are this repo and can proceed now. Step 5 is a different repo and can
+run in parallel. Steps 6–8 depend on both.
+
+### 1. Fix the scope grammar (W1) — nothing can be tested until this lands
+
+34 sites across `rpc.rs`, `authz.rs`, `auth_center.rs`, `main.rs` and the two
+integration test files. One production function, one constant, the rest
+assertions and fixtures. Note that the test fixtures use `deploy:**` and
+`deploy:*:create-project`, which are three-segment and equally invalid; they
+become `**` and `*:create-project`.
+
+### 2. Drop the speculative resource check (W2)
+
+Now settled by evidence rather than assumption: the survey confirms there is
+**no resources table**, resources are a derived read-only view assembled per
+request from scopes on keys, roles, secrets and usage rows, and they are exposed
+only under `/admin/api`, gated on `auth:admin`. The narrow
+`auth:list-resources` endpoint is a proposal in a requirements doc, not code.
+
+So delete `verify_resource_exists`, and make denials name the scope they
+checked. That is the doc's "check at first use", and it is now the only option
+that does not over-privilege the instance.
+
+### 3. Docs and configuration (W3)
+
+### 4. Tier-1 tooling (W6)
+
+`deploy auth-scopes <config.qc>` prints the scopes a config needs, derived from
+`METHOD_TABLE`. `deploy create-project` ends by printing ready-to-run
+`auth-setup create-role` / `create-key` commands.
+
+This matters more than it looks, for a reason the survey turned up: when
+`validate_scope` rejects a three-segment scope it **auto-suggests a fix** by
+joining all but the last segment with `-`. So `deploy:hotlaps-staging:deploy` is
+rejected with the suggestion `deploy-hotlaps-staging:deploy` — which is valid,
+and names a resource that is *not* the one the deploy server will ask about.
+Anyone following that suggestion gets a key that validates, mints cleanly, and
+is denied on every call. Generating the string removes the chance to take that
+bait.
+
+### 5. Redeploy auth-center's backend (different repo)
+
+`/setup/*` is written but not live: `~/auth-center/docs/handoff.md` marks
+`auth-setup` "Not yet deployed — needs a `deploy run deploy/api.qc`". Until that
+happens, every `auth-setup` command fails against the real host, so this gates
+step 6.
+
+That redeploy uses the **old** deploy tool, which still works. Worth noticing:
+until do2 is cut over, the old tool is exactly the "tested way back in" that the
+requirements ask for against the auth-service circular dependency.
+
+One prerequisite hiding in the handoff: approving a setup request needs an admin
+to **sign in** with `auth:admin`, and the `andy` account is still on the
+one-time password that `create-admin` printed. Change it before relying on the
+approval flow, and note that changing your own password drops every session for
+the account, including the one doing the changing.
+
+### 6. Create the topology with `auth-setup`
+
+```bash
+export AUTH_URL=https://$AUTH_HOST
+
+auth-setup create-project server-admin --name 'Server Admin'
+auth-setup create-role deploy-admin --project server-admin \
+    --scope do2-deploy:create-project --scope dohl-deploy:create-project
+auth-setup create-key andy-laptop-admin --project server-admin --role deploy-admin
+
+auth-setup create-role deployer --project hotlaps \
+    --scope hotlaps-api-staging:deploy --scope hotlaps-frontend-staging:deploy
+auth-setup create-key hotlaps-ci --project hotlaps --role deployer \
+    --service github-actions
+```
+
+Each blocks for a browser approval. Capture each `ak_…` at the moment it is
+printed — it is shown once, and the plaintext is wiped from the server the
+instant the tool collects it. A tool that dies in that window has lost the key.
+
+Then `auth-service check-conflicts` on the auth host to confirm no resource name
+is owned by two projects.
+
+### 7. Verify against the live auth service
+
+Point a local `deploy-server` at the real host with do2's existing service key
+(`deploy-server-do2`, `b11b8ad7b30d2f73`, in `/root/secrets/` on do2) and
+confirm: a real key accepted for `deploy`, denied for `execute-sql`, plus the
+three misconfiguration responses — `401` (bad `DEPLOY_AUTH_KEY`), `403` (key
+lacks `auth:introspect`), and `{"active": false}` for an unknown token. The
+first two must deny *and* log loudly; they mean the instance is broken, not the
+caller.
+
+### 8. Cut do2 over
+
+Per the rollout sequence, once every caller has a working key.
 
 ## Out of scope
 
