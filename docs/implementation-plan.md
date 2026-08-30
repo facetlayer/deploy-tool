@@ -322,17 +322,11 @@ costs nobody a trip to the browser. That makes it a cheap way to check a scope
 string before anyone is asked to approve anything — though it still cannot
 answer "does this resource exist", since nothing can (step 2).
 
-### 5. Change the admin password — the only remaining prerequisite
+### 5. Prerequisites — DONE
 
-The server side is already deployed and `/setup` is reachable (see W6 above), so
-there is no auth-center deploy in front of this work.
-
-The one prerequisite left is human, not technical: approving a setup request
-needs an admin to **sign in** with `auth:admin`, and per
-`~/auth-center/docs/handoff.md` the `andy` account is still on the one-time
-password that `create-admin` printed. Change it before relying on the approval
-flow, and note that changing your own password drops every session for the
-account, including the one doing the changing.
+Nothing is left in front of the auth-center side. The server half is deployed
+and `/setup` is reachable (see W6), and the `andy` account's one-time password
+has been changed, so setup requests can be approved in the browser.
 
 ### 6. Create the topology with `auth-setup`
 
