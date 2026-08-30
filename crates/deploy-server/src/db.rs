@@ -1,8 +1,10 @@
 //! SQLite schema and access.
 //!
-//! Compatibility with the old tool's database is explicitly not a requirement
-//! (R6), so this schema is authoritative: an instance is cut over by rebuilding
-//! its database, not by migrating one in place.
+//! Compatibility with the old tool's database is not a *requirement* (R6), but
+//! it turns out to be worth having: do2 was cut over by pointing this server at
+//! the existing database, which kept 27 live deployments that a rebuild would
+//! have discarded. So the schema is authoritative and additive — see
+//! `ADDED_COLUMNS`.
 
 use std::path::PathBuf;
 
@@ -129,6 +131,36 @@ pub fn init_connection(conn: &Connection) -> Result<()> {
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "busy_timeout", 5000)?;
     conn.execute_batch(SCHEMA)?;
+    add_missing_columns(conn)?;
+    Ok(())
+}
+
+/// Columns this version adds to a table the old tool also had.
+///
+/// `create table if not exists` does nothing to a table that already exists, so
+/// these have to be added explicitly. That matters because cutting an instance
+/// over is done by pointing this server at the existing database — which keeps
+/// the 27 live `active_deployment` and `deployment` rows that a rebuild would
+/// have thrown away. Without this, every `createDeployment` and
+/// `listDeployments` fails on `no such column` the moment the server starts.
+const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+    ("deployment", "authorized_by_key_id", "text"),
+    ("deployment", "authorized_by_key_name", "text"),
+];
+
+fn add_missing_columns(conn: &Connection) -> Result<()> {
+    for (table, column, col_type) in ADDED_COLUMNS {
+        let present: i64 = conn.query_row(
+            "select count(*) from pragma_table_info(?1) where name = ?2",
+            rusqlite::params![table, column],
+            |row| row.get(0),
+        )?;
+        if present == 0 {
+            conn.execute_batch(&format!(
+                "alter table {table} add column {column} {col_type}"
+            ))?;
+        }
+    }
     Ok(())
 }
 
@@ -165,4 +197,70 @@ pub fn get_deployments_dir(conn: &Connection) -> Result<PathBuf> {
     found
         .map(PathBuf::from)
         .ok_or_else(|| anyhow!("Deployments directory has not been configured"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The exact `deployment` table the old tool created. Reproduced here
+    /// because opening a database of this shape is how an instance is cut over,
+    /// and the columns R7 added are not in it.
+    const OLD_DEPLOYMENT_TABLE: &str = r#"
+        create table deployment(
+          deploy_name text primary key,
+          deploy_dir text not null,
+          project_name text not null,
+          created_at datetime not null,
+          source_config_file text,
+          manifest_json text,
+          web_static_dir text,
+          dynamic_routes_json text,
+          tags_json text
+        );
+    "#;
+
+    /// Regression: `create table if not exists` silently does nothing to a
+    /// table that already exists, so the R7 attribution columns never appeared
+    /// on a cut-over instance. Every createDeployment and listDeployments then
+    /// failed with `no such column: authorized_by_key_id` — which is exactly
+    /// what happened on do2, in production, minutes after the cutover.
+    #[test]
+    fn opening_an_old_database_adds_the_columns_r7_needs() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(OLD_DEPLOYMENT_TABLE).unwrap();
+        conn.execute_batch(
+            "insert into deployment (deploy_name, deploy_dir, project_name, created_at)
+             values ('envscore-api-41', 'envscore-api', 'envscore-api', '2026-01-01T00:00:00.000Z');",
+        )
+        .unwrap();
+
+        init_connection(&conn).unwrap();
+
+        // The queries that broke, run against the upgraded table.
+        let listed: String = conn
+            .query_row(
+                "select deploy_name from deployment
+                 where authorized_by_key_id is null and authorized_by_key_name is null",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(listed, "envscore-api-41", "the existing row must survive");
+
+        conn.execute_batch(
+            "insert into deployment (deploy_name, deploy_dir, project_name, created_at,
+                                     authorized_by_key_id, authorized_by_key_name)
+             values ('envscore-api-42', 'envscore-api', 'envscore-api',
+                     '2026-01-02T00:00:00.000Z', 'key_1', 'hotlaps-ci');",
+        )
+        .unwrap();
+
+        // Idempotent: restarting the server must not fail on a second pass.
+        init_connection(&conn).unwrap();
+        let count: i64 = conn
+            .query_row("select count(*) from deployment", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 2);
+    }
 }
