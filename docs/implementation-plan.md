@@ -213,10 +213,26 @@ Details that matter for scripting it:
   key — revoke it and ask again.
 - Anything but approval exits non-zero.
 
-**It is not live on do2 yet.** The `/setup/*` endpoints are in the code but the
-backend has not been redeployed since; `~/auth-center/docs/handoff.md` marks it
-"Not yet deployed — needs a `deploy run deploy/api.qc`". That redeploy uses the
-*old* deploy tool, and is a prerequisite for the sequence below.
+**It is live and usable now.** `auth-setup` is a *client* that runs on a laptop;
+only the server half ever ships to do2, and it has — `auth-service-api` build
+407 from auth-center `bf6dd5e`. Verified rather than assumed:
+
+```
+$ curl -s -X POST https://$AUTH_HOST/setup/api/requests \
+    -H 'content-type: application/json' \
+    -d '{"kind":"create-role","project":"__nope__","name":"x","scopes":[],
+         "token":"rq_00000000000000000000000000000000"}'
+HTTP 400  {"error":"unknown project \"__nope__\""}
+```
+
+A backend validation error means the route reaches the backend. A 404 with
+"File not found" would have meant nginx never got there — which is exactly what
+happened at first: the vhost proxies an explicit prefix list, so `/setup` had to
+be added to the location regex in `/etc/nginx/sites-enabled/$AUTH_HOST` before
+it worked. That is worth remembering for any future path this service adds; a
+deploy alone is not enough.
+
+`~/auth-center/docs/handoff.md` still says "Not yet deployed". It is stale.
 
 One gap remains:
 
@@ -300,22 +316,23 @@ Anyone following that suggestion gets a key that validates, mints cleanly, and
 is denied on every call. Generating the string removes the chance to take that
 bait.
 
-### 5. Redeploy auth-center's backend (different repo)
+`auth-setup` validates a request when it is *made*, not at approval, so a bad
+scope or an unknown project comes back immediately with the real error and
+costs nobody a trip to the browser. That makes it a cheap way to check a scope
+string before anyone is asked to approve anything — though it still cannot
+answer "does this resource exist", since nothing can (step 2).
 
-`/setup/*` is written but not live: `~/auth-center/docs/handoff.md` marks
-`auth-setup` "Not yet deployed — needs a `deploy run deploy/api.qc`". Until that
-happens, every `auth-setup` command fails against the real host, so this gates
-step 6.
+### 5. Change the admin password — the only remaining prerequisite
 
-That redeploy uses the **old** deploy tool, which still works. Worth noticing:
-until do2 is cut over, the old tool is exactly the "tested way back in" that the
-requirements ask for against the auth-service circular dependency.
+The server side is already deployed and `/setup` is reachable (see W6 above), so
+there is no auth-center deploy in front of this work.
 
-One prerequisite hiding in the handoff: approving a setup request needs an admin
-to **sign in** with `auth:admin`, and the `andy` account is still on the
-one-time password that `create-admin` printed. Change it before relying on the
-approval flow, and note that changing your own password drops every session for
-the account, including the one doing the changing.
+The one prerequisite left is human, not technical: approving a setup request
+needs an admin to **sign in** with `auth:admin`, and per
+`~/auth-center/docs/handoff.md` the `andy` account is still on the one-time
+password that `create-admin` printed. Change it before relying on the approval
+flow, and note that changing your own password drops every session for the
+account, including the one doing the changing.
 
 ### 6. Create the topology with `auth-setup`
 
@@ -353,6 +370,13 @@ caller.
 ### 8. Cut do2 over
 
 Per the rollout sequence, once every caller has a working key.
+
+Keep the old deploy tool working until this is done and proven. It is the only
+thing that can deploy auth-center without auth-center being up, which is the
+"tested way back in" the requirements ask for against the circular dependency —
+and it stops being available the moment do2 is cut over. Deciding whether
+auth-center's own deploys stay on a separate path (W5) is due before this step,
+not after it.
 
 ## Out of scope
 
