@@ -131,6 +131,16 @@ enum Command {
         override_dest: Option<String>,
     },
 
+    /// Print the auth-center scopes a project needs, and the auth-setup
+    /// commands that create them
+    AuthScopes {
+        config_file: PathBuf,
+
+        /// auth-center resource this project is bound to on the target instance
+        #[arg(long)]
+        resource: String,
+    },
+
     /// Register a project and bind it to an auth-center resource
     CreateProject {
         project_name: String,
@@ -262,6 +272,11 @@ fn run() -> Result<()> {
             override_dest.as_deref(),
         ),
 
+        Command::AuthScopes {
+            config_file,
+            resource,
+        } => commands::auth_scopes::auth_scopes(&config_file, &resource),
+
         Command::StartServices => commands::start_services::start_services(),
 
         Command::PreviewStartServices => commands::start_services::preview_start_services(),
@@ -322,6 +337,27 @@ mod tests {
                 assert!(rebind);
             }
             _ => panic!("expected create-project"),
+        }
+    }
+
+    #[test]
+    fn auth_scopes_takes_a_config_file_and_a_resource() {
+        let cli = Cli::parse_from([
+            "deploy",
+            "auth-scopes",
+            "deploy.qc",
+            "--resource",
+            "hotlaps-api-staging",
+        ]);
+        match cli.command {
+            Command::AuthScopes {
+                config_file,
+                resource,
+            } => {
+                assert_eq!(config_file.to_str(), Some("deploy.qc"));
+                assert_eq!(resource, "hotlaps-api-staging");
+            }
+            _ => panic!("expected auth-scopes"),
         }
     }
 

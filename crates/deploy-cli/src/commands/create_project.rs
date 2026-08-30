@@ -86,20 +86,8 @@ pub fn create_project(
         result.resource_name, actions
     );
 
-    if !result.resource_verified {
-        // auth-center has no resource registry yet, so a typo in the resource
-        // name cannot be caught here — it shows up as every deploy being
-        // denied. See "Known gap" in docs/auth-integration.md.
-        println!();
-        println!(
-            "WARNING: the server could not verify that resource '{}' exists in auth-center.",
-            result.resource_name
-        );
-        println!(
-            "         Check the spelling against the auth-center dashboard: an unknown \
-             resource denies every call for this project."
-        );
-    }
+    println!();
+    crate::commands::auth_scopes::print_scope_report(&result.project_name, &result.resource_name);
 
     println!();
     Ok(())
