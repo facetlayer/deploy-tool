@@ -85,19 +85,48 @@ pub fn print_scope_report(project_name: &str, resource_name: &str) {
 /// Prints ready-to-run `auth-setup` lines. `auth-setup` holds no credential —
 /// it proposes the change and blocks on a browser approval — so these are safe
 /// to paste as-is.
+///
+/// The suggested role deliberately grants only `deploy` and `read`, not every
+/// scope this resource has. R3 exists because a CI key that ships builds must
+/// not be able to run arbitrary SQL against the project's database, and a
+/// generator that bundles `execute-sql` into the obvious copy-paste line would
+/// hand out exactly the grant the split was made to prevent. The dangerous
+/// actions are printed separately, as a deliberate second step.
 pub fn print_auth_setup_commands(resource_name: &str, scopes: &[ActionScope]) {
     let role = format!("{resource_name}-deployer");
 
+    let (bundled, separate): (Vec<&ActionScope>, Vec<&ActionScope>) = scopes
+        .iter()
+        .partition(|entry| matches!(entry.action, Action::Deploy | Action::Read));
+
     println!("  auth-setup create-role {role} \\");
     println!("      --project <auth-service-project-id> \\");
-    for entry in scopes {
+    for entry in &bundled {
         println!("      --scope {} \\", entry.scope);
     }
-    println!("      --description 'Deploy access to {resource_name}'");
+    println!("      --description 'Ship and inspect deployments of {resource_name}'");
     println!();
-    println!("  auth-setup create-key {resource_name}-key \\");
+    println!("  auth-setup create-key {resource_name}-ci \\");
     println!("      --project <auth-service-project-id> \\");
+    println!("      --service github-actions \\");
     println!("      --role {role}");
+
+    if separate.is_empty() {
+        return;
+    }
+
+    println!();
+    println!("The remaining actions are deliberately NOT in that role. Grant them only to");
+    println!("keys that need them, as their own role or directly on a key:");
+    println!();
+    for entry in &separate {
+        let why = match entry.action {
+            Action::ExecuteSql => "arbitrary SQL against the project's database",
+            Action::Rollback => "repointing the live deployment, without shipping new code",
+            _ => "",
+        };
+        println!("  {:<44}  {why}", entry.scope);
+    }
 }
 
 /// Contacts no server and needs no API key: everything printed is derived from
@@ -133,6 +162,27 @@ pub fn auth_scopes(config_file: &Path, resource_name: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// R3's reason for splitting the actions is that a CI key which ships
+    /// builds must not be able to run arbitrary SQL. The copy-paste line is
+    /// what people will actually run, so if it bundled execute-sql the split
+    /// would be decorative.
+    #[test]
+    fn the_suggested_role_does_not_bundle_the_dangerous_actions() {
+        let scopes = project_scopes("hotlaps-api-staging");
+        let bundled: Vec<Action> = scopes
+            .iter()
+            .map(|entry| entry.action)
+            .filter(|action| matches!(action, Action::Deploy | Action::Read))
+            .collect();
+
+        assert_eq!(bundled, vec![Action::Deploy, Action::Read]);
+        assert!(
+            !bundled.contains(&Action::ExecuteSql),
+            "execute-sql must be granted deliberately, not bundled"
+        );
+        assert!(!bundled.contains(&Action::Rollback));
+    }
 
     #[test]
     fn scopes_are_exactly_what_scope_string_produces_for_each_action() {
