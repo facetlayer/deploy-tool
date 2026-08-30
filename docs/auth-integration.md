@@ -269,7 +269,7 @@ in the JSON-RPC error's `data` depends on what the key turned out to be
   name, unregistered or unbound project — also gets a bare `Unauthorized`.
 
 The one deliberate exception is an unreachable auth-center, which is told to
-the caller in coarse terms ("could not reach auth-center; see the server's
+the caller in coarse terms ("could not get a verdict from auth-center; see the server's
 journal"). It is not a verdict about the caller and it names no binding, and it
 is the failure an operator is most likely to meet during a cutover — where the
 alternative is staring at a bare `Unauthorized` while the real cause sits in a

@@ -88,7 +88,10 @@ impl Denial {
     /// meet during a cutover, where the alternative is staring at a bare
     /// "Unauthorized" while the real cause sits in a journal on a host they may
     /// not be able to read. The detail is deliberately coarse — that the
-    /// instance could not reach auth-center, not the URL or the error.
+    /// instance got no verdict, not the URL, the status or the error. Note it
+    /// covers a misconfigured instance (auth-center answered 401 or 403 for
+    /// this server's own service key) as well as an unreachable one, because
+    /// the caller can act on neither and both mean the same thing to them.
     pub fn client_detail(&self) -> Option<String> {
         match self {
             Denial::NotAuthorized {
@@ -97,8 +100,9 @@ impl Denial {
                 ..
             } => Some(format!("this key does not hold {scope}")),
             Denial::AuthUnavailable(_) => Some(
-                "this deploy server could not reach auth-center, so it denied the call; \
-                 see the server's journal for the reason"
+                "this deploy server could not get a verdict from auth-center, so it denied \
+                 the call; it is misconfigured or auth-center is unreachable. See the \
+                 server's journal for which."
                     .to_string(),
             ),
             _ => None,
