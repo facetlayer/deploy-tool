@@ -95,14 +95,7 @@ impl RpcClient {
                 // authorization) in the body, so surface it rather than just
                 // the status line.
                 let text = response.into_string().unwrap_or_default();
-                bail!(
-                    "JSON-RPC {method} failed: HTTP {code}{}",
-                    if text.trim().is_empty() {
-                        String::new()
-                    } else {
-                        format!(": {}", text.trim())
-                    }
-                );
+                bail!(http_error_message(method, code, &text));
             }
             Err(err) => {
                 return Err(anyhow!(err)).with_context(|| {
@@ -246,6 +239,44 @@ impl RpcClient {
     }
 }
 
+/// An authorization denial arrives as HTTP 401 whose body is still a JSON-RPC
+/// error envelope, so read it as one rather than showing the user raw JSON.
+/// When the server judged the key active it names the scope it checked in
+/// `data`, which is what turns a mistyped resource into an obvious message
+/// instead of a silent wall of denials.
+fn http_error_message(method: &str, code: u16, text: &str) -> String {
+    let text = text.trim();
+
+    if code == 401 {
+        if let Some(error) = serde_json::from_str::<Value>(text)
+            .ok()
+            .and_then(|envelope| envelope.get("error").cloned())
+        {
+            let detail = error
+                .get("data")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or_else(|| {
+                    error
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+                .unwrap_or_else(|| "unauthorized".to_string());
+            return format!("JSON-RPC {method} denied: {detail}");
+        }
+    }
+
+    format!(
+        "JSON-RPC {method} failed: HTTP {code}{}",
+        if text.is_empty() {
+            String::new()
+        } else {
+            format!(": {text}")
+        }
+    )
+}
+
 /// Configs carry a bare origin (`https://do2.example`), so the endpoint path is
 /// appended unless it is already there.
 fn json_rpc_url(dest_url: &str) -> String {
@@ -272,6 +303,40 @@ mod tests {
         assert_eq!(
             json_rpc_url("https://do2.example/"),
             "https://do2.example/json-rpc"
+        );
+    }
+
+    #[test]
+    fn a_denial_reads_as_the_scope_that_was_checked() {
+        let body = r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32001,
+                       "message":"Unauthorized",
+                       "data":"this key does not hold hotlaps-api-staging:deploy"}}"#;
+        assert_eq!(
+            http_error_message("createDeployment", 401, body),
+            "JSON-RPC createDeployment denied: \
+             this key does not hold hotlaps-api-staging:deploy"
+        );
+    }
+
+    /// A denial with nothing to disclose still reads as a sentence.
+    #[test]
+    fn a_denial_without_data_falls_back_to_the_message() {
+        let body = r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32001,"message":"Unauthorized"}}"#;
+        assert_eq!(
+            http_error_message("createDeployment", 401, body),
+            "JSON-RPC createDeployment denied: Unauthorized"
+        );
+    }
+
+    #[test]
+    fn other_statuses_keep_the_raw_body() {
+        assert_eq!(
+            http_error_message("executeSql", 500, "boom"),
+            "JSON-RPC executeSql failed: HTTP 500: boom"
+        );
+        assert_eq!(
+            http_error_message("executeSql", 413, ""),
+            "JSON-RPC executeSql failed: HTTP 413"
         );
     }
 

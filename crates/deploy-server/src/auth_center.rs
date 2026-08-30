@@ -53,26 +53,19 @@ pub struct KeyIdentity {
 pub enum Introspection {
     Allowed(KeyIdentity),
     /// auth-center answered, and the answer was no.
+    ///
+    /// `active` separates a real key that simply lacks the scope from one
+    /// auth-center does not recognize at all. Only the former may be told
+    /// which scope was checked: see the denial data in `server.rs`.
     Denied {
+        active: bool,
+        scope: String,
         detail: String,
     },
     /// auth-center could not be asked, or its answer could not be read.
     Unavailable {
         detail: String,
     },
-}
-
-/// Outcome of the best-effort resource existence probe used by `createProject`.
-/// See "Known gap" in docs/auth-integration.md.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ResourceCheck {
-    /// auth-center confirmed the resource exists.
-    Verified,
-    /// auth-center answered that this resource does not exist. Reject.
-    NotFound,
-    /// No usable answer — most likely because auth-center has no resource
-    /// registry yet. Proceed, loudly.
-    Unverifiable { detail: String },
 }
 
 /// Per-instance auth-center configuration, read from the environment file.
@@ -230,6 +223,8 @@ impl AuthCenter {
 
         if !active || !allowed {
             return Introspection::Denied {
+                active,
+                scope: scope.clone(),
                 detail: format!(
                     "auth-center denied scope '{scope}': active={} allowed={}",
                     payload.get("active").unwrap_or(&Json::Null),
@@ -254,65 +249,6 @@ impl AuthCenter {
 
         self.cache_put(cache_key, now, identity.clone());
         Introspection::Allowed(identity)
-    }
-
-    /// Best-effort check that auth-center knows the named resource, so a typo
-    /// in `create-project --resource` surfaces at registration rather than as a
-    /// mass denial at the next deploy (R1).
-    ///
-    /// auth-center has no resource registry today, so in practice every call
-    /// takes the `Unverifiable` branch. See "Known gap" in
-    /// docs/auth-integration.md; this is a stub only in the typo check, never in
-    /// the authorization path.
-    ///
-    /// Unused until `createProject` wires it up; kept here because the client is
-    /// where the three-branch behavior is specified.
-    #[allow(dead_code)]
-    pub fn verify_resource_exists(&self, resource: &str) -> ResourceCheck {
-        let url = format!(
-            "{}/api/v1/resources/{}",
-            self.config.base_url,
-            urlencode_segment(resource)
-        );
-
-        match self
-            .agent
-            .get(&url)
-            .set(
-                "authorization",
-                &format!("Bearer {}", self.config.service_key),
-            )
-            .call()
-        {
-            Ok(_) => ResourceCheck::Verified,
-            Err(ureq::Error::Status(404, response)) => {
-                // Distinguishing "no such resource" from "no such endpoint"
-                // matters: the first must reject the registration, the second
-                // must not. auth-center's API errors are JSON objects; a route
-                // that does not exist answers with an empty or non-JSON body.
-                let body = truncated_body(response);
-                if serde_json::from_str::<Json>(&body)
-                    .ok()
-                    .filter(|value| value.is_object())
-                    .is_some()
-                {
-                    ResourceCheck::NotFound
-                } else {
-                    ResourceCheck::Unverifiable {
-                        detail: format!(
-                            "{url} answered 404 with no JSON body; \
-                             auth-center probably has no resource registry"
-                        ),
-                    }
-                }
-            }
-            Err(ureq::Error::Status(code, _)) => ResourceCheck::Unverifiable {
-                detail: format!("{url} answered HTTP {code}"),
-            },
-            Err(err) => ResourceCheck::Unverifiable {
-                detail: format!("{url} could not be reached: {err}"),
-            },
-        }
     }
 
     /// Logged here rather than at the call site: an operator reading the
@@ -375,22 +311,6 @@ fn truncated_body(response: ureq::Response) -> String {
         .collect()
 }
 
-/// Resource names come from an operator, but they land in a URL path, so
-/// percent-encode anything outside the unreserved set rather than trusting them.
-#[allow(dead_code)]
-fn urlencode_segment(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for byte in value.as_bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                out.push(*byte as char)
-            }
-            _ => out.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    out
-}
-
 /// The process-wide client, installed once at startup so the positive cache is
 /// shared across requests.
 static GLOBAL: OnceLock<AuthCenter> = OnceLock::new();
@@ -427,13 +347,6 @@ pub(crate) mod tests {
     fn cache_key_does_not_contain_the_key_text() {
         let key = cache_key_for("super-secret", "res", Action::Read);
         assert!(!key.contains("super-secret"));
-    }
-
-    #[test]
-    fn url_segments_are_encoded() {
-        assert_eq!(urlencode_segment("hotlaps-staging"), "hotlaps-staging");
-        assert_eq!(urlencode_segment("a/b"), "a%2Fb");
-        assert_eq!(urlencode_segment("a b"), "a%20b");
     }
 
     /// R6: there is no configuration in which the server runs without

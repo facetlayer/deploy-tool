@@ -48,8 +48,14 @@ pub enum Denial {
     UnknownMethod(String),
     /// The call could not be resolved to a bound resource.
     Unresolved(String),
-    /// auth-center answered, and the answer was no.
-    NotAuthorized(String),
+    /// auth-center answered, and the answer was no. `active` is true when the
+    /// key itself is real and unrevoked and merely lacks the scope, which is
+    /// the only case where the scope may be echoed back to the caller.
+    NotAuthorized {
+        active: bool,
+        scope: String,
+        detail: String,
+    },
     /// auth-center could not be asked.
     AuthUnavailable(String),
 }
@@ -62,8 +68,27 @@ impl Denial {
                 format!("method '{method}' has no entry in the authorization table")
             }
             Denial::Unresolved(detail) => detail.clone(),
-            Denial::NotAuthorized(detail) => detail.clone(),
+            Denial::NotAuthorized { detail, .. } => detail.clone(),
             Denial::AuthUnavailable(detail) => detail.clone(),
+        }
+    }
+
+    /// What may be told to the caller, beyond a bare "Unauthorized".
+    ///
+    /// Naming the scope is the whole diagnostic: a caller whose key is real
+    /// learns it needs `hotlaps-api-staging:deploy` and sees the typo
+    /// immediately, without auth-center needing a resource registry to check
+    /// against at registration time. It is withheld from an unknown or revoked
+    /// key, because that would let anyone holding a random string enumerate
+    /// this instance's project-to-resource bindings.
+    pub fn client_detail(&self) -> Option<String> {
+        match self {
+            Denial::NotAuthorized {
+                active: true,
+                scope,
+                ..
+            } => Some(format!("this key does not hold {scope}")),
+            _ => None,
         }
     }
 }
@@ -93,7 +118,15 @@ pub fn authorize(
 
     match ctx.auth.introspect(api_key, &resource, spec.action) {
         Introspection::Allowed(identity) => Ok(AuthorizedKey::new(identity.key_id, identity.name)),
-        Introspection::Denied { detail } => Err(Denial::NotAuthorized(detail)),
+        Introspection::Denied {
+            active,
+            scope,
+            detail,
+        } => Err(Denial::NotAuthorized {
+            active,
+            scope,
+            detail,
+        }),
         Introspection::Unavailable { detail } => Err(Denial::AuthUnavailable(detail)),
     }
 }
@@ -203,7 +236,7 @@ fn resource_of_project(
 mod tests {
     use super::*;
     use crate::auth_center::tests::{start_stub, StubReply};
-    use crate::auth_center::{AuthCenterConfig, ResourceCheck};
+    use crate::auth_center::AuthCenterConfig;
     use crate::db;
     use deploy_core::rpc::{methods, ProjectResolution, METHOD_TABLE};
     use serde_json::json;
@@ -509,7 +542,7 @@ mod tests {
             &json!({ "projectName": "hotlaps-api" }),
         );
         assert!(
-            matches!(decision, Err(Denial::NotAuthorized(_))),
+            matches!(decision, Err(Denial::NotAuthorized { .. })),
             "got {decision:?}"
         );
     }
@@ -545,7 +578,7 @@ mod tests {
             &json!({ "projectName": "hotlaps-api" }),
         );
         assert!(
-            matches!(decision, Err(Denial::NotAuthorized(_))),
+            matches!(decision, Err(Denial::NotAuthorized { .. })),
             "got {decision:?}"
         );
     }
@@ -564,7 +597,7 @@ mod tests {
             methods::CREATE_DEPLOYMENT,
             &json!({ "projectName": "hotlaps-api" }),
         );
-        assert!(matches!(decision, Err(Denial::NotAuthorized(_))));
+        assert!(matches!(decision, Err(Denial::NotAuthorized { .. })));
     }
 
     #[test]
@@ -580,7 +613,7 @@ mod tests {
                 methods::LIST_DEPLOYMENTS,
                 &json!({ "projectName": "p" })
             ),
-            Err(Denial::NotAuthorized(_))
+            Err(Denial::NotAuthorized { .. })
         ));
     }
 
@@ -746,42 +779,5 @@ mod tests {
             .is_err());
         }
         assert_eq!(stub.requests().len(), 3, "every denial must be re-asked");
-    }
-
-    // -- the resource existence probe (known gap) --------------------------
-
-    #[test]
-    fn resource_probe_accepts_a_200() {
-        let stub = start_stub(|_, _, _| StubReply::json(200, r#"{"name":"hotlaps-staging"}"#));
-        assert_eq!(
-            auth_for(&stub).verify_resource_exists("hotlaps-staging"),
-            ResourceCheck::Verified
-        );
-    }
-
-    #[test]
-    fn resource_probe_rejects_a_json_404() {
-        let stub = start_stub(|_, _, _| StubReply::json(404, r#"{"error":"no such resource"}"#));
-        assert_eq!(
-            auth_for(&stub).verify_resource_exists("typoed-name"),
-            ResourceCheck::NotFound
-        );
-    }
-
-    #[test]
-    fn resource_probe_proceeds_when_the_endpoint_is_missing() {
-        // What auth-center actually does today: the route does not exist, so
-        // the 404 carries no JSON body. Warn and proceed.
-        let stub = start_stub(|_, _, _| StubReply::json(404, ""));
-        assert!(matches!(
-            auth_for(&stub).verify_resource_exists("hotlaps-staging"),
-            ResourceCheck::Unverifiable { .. }
-        ));
-
-        let stub = start_stub(|_, _, _| StubReply::json(503, "upstream down"));
-        assert!(matches!(
-            auth_for(&stub).verify_resource_exists("hotlaps-staging"),
-            ResourceCheck::Unverifiable { .. }
-        ));
     }
 }

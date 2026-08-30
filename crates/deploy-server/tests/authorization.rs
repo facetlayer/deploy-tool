@@ -839,3 +839,98 @@ fn a_local_server_with_the_key_check_disabled_needs_no_auth_configuration() {
         "serve --disable-api-key-check exited instead of starting: {exited:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// What a denial tells the caller
+// ---------------------------------------------------------------------------
+
+/// Posts one call and returns the JSON-RPC `error` object out of the 401 body.
+/// The shared `Rpc` helper collapses a 401 to `RpcError::Unauthorized` and
+/// throws the body away, and the body is exactly what is under test here.
+fn denial_error(server: &DeployServer, api_key: &str, method: &str, params: Json) -> Json {
+    let response = ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .post(&format!("{}/json-rpc", server.url()))
+        .set("content-type", "application/json")
+        .set("x-api-key", api_key)
+        .send_string(
+            &json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params }).to_string(),
+        );
+
+    match response {
+        Ok(_) => panic!("{method} should have been denied"),
+        Err(ureq::Error::Status(401, response)) => {
+            let body: Json = response.into_json().expect("the 401 body should be JSON");
+            body.get("error")
+                .cloned()
+                .unwrap_or_else(|| panic!("no JSON-RPC error in the 401 body: {body}"))
+        }
+        Err(err) => panic!("{method} failed unexpectedly: {err}"),
+    }
+}
+
+/// R1's registration-time existence check is not implementable — auth-center
+/// has no resource registry to ask. This is what replaces it: the first denied
+/// call names the scope it checked, so a mistyped `--resource` is obvious at
+/// first use instead of being an unexplained wall of denials.
+#[test]
+fn an_active_key_is_told_which_scope_it_lacks() {
+    let root = TempRoot::new("denial-names-scope");
+    let (_stub, server) = start(&root, granting(standard_grants()));
+
+    server.client(ADMIN_KEY).ok(
+        "createProject",
+        json!({ "projectName": "hotlaps-api", "resourceName": RESOURCE }),
+    );
+
+    // CI_KEY is active and holds `hotlaps-staging:deploy`, but not the
+    // `execute-sql` action on it.
+    let error = denial_error(
+        &server,
+        CI_KEY,
+        "executeSql",
+        json!({ "projectName": "hotlaps-api", "sql": "select 1" }),
+    );
+
+    assert_eq!(error["message"], "Unauthorized");
+    let data = error["data"]
+        .as_str()
+        .unwrap_or_else(|| panic!("an active key should be told the scope: {error}"));
+    assert!(
+        data.contains("hotlaps-staging:execute-sql"),
+        "the denial should name the scope it checked: {data}"
+    );
+}
+
+/// The other side of that boundary. An unknown or revoked key learns nothing:
+/// telling it which resource a project is bound to would let anyone with a
+/// random string enumerate this instance's bindings.
+#[test]
+fn an_unknown_key_learns_nothing_about_the_binding() {
+    let root = TempRoot::new("denial-no-leak");
+    let (_stub, server) = start(&root, granting(standard_grants()));
+
+    server.client(ADMIN_KEY).ok(
+        "createProject",
+        json!({ "projectName": "hotlaps-api", "resourceName": RESOURCE }),
+    );
+
+    let error = denial_error(
+        &server,
+        "not-a-real-key",
+        "executeSql",
+        json!({ "projectName": "hotlaps-api", "sql": "select 1" }),
+    );
+
+    assert_eq!(error["message"], "Unauthorized");
+    assert!(
+        error.get("data").is_none(),
+        "an inactive key must get a bare Unauthorized: {error}"
+    );
+    let rendered = error.to_string();
+    assert!(
+        !rendered.contains(RESOURCE),
+        "the bound resource must not leak to an unknown key: {rendered}"
+    );
+}

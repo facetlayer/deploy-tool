@@ -284,8 +284,6 @@ mod tests {
 
         assert_eq!(result["outcome"], "created");
         assert_eq!(result["resourceName"], "hotlaps-staging");
-        // No resource registry exists to confirm the name against yet.
-        assert_eq!(result["resourceVerified"], false);
 
         let conn = server.state.db();
         let bound: (String, Option<String>) = conn

@@ -135,9 +135,12 @@ async fn handle_json_rpc(
         Ok(key) => key,
         Err(denial) => {
             eprintln!("[deploy auth] denied \"{}\": {}", method, denial.reason());
+            // The journal always gets the full reason; the caller gets it only
+            // when the key was active. See Denial::client_detail.
+            let data = denial.client_detail().map(Json::from);
             return (
                 StatusCode::UNAUTHORIZED,
-                axum::Json(error_response(id, UNAUTHORIZED, "Unauthorized", None)),
+                axum::Json(error_response(id, UNAUTHORIZED, "Unauthorized", data)),
             )
                 .into_response();
         }

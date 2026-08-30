@@ -241,8 +241,11 @@ fn deploy_run_fails_when_the_key_does_not_hold_the_projects_resource() {
     let run = workspace
         .deploy(OTHER_KEY)
         .expect_failure("deploy run with a key for another resource");
+    // The denial names the scope it checked, which is what makes a mistyped
+    // resource obvious at first use rather than a wall of bare 401s.
     assert!(
-        run.output().contains("Unauthorized"),
+        run.output()
+            .contains("denied: this key does not hold basic-staging:deploy"),
         "the CLI should surface the denial: {}",
         run.output()
     );
@@ -298,7 +301,12 @@ fn create_project_needs_the_instance_administration_action() {
             ],
         )
         .expect_failure("create-project with a project-scoped key");
-    assert!(run.output().contains("Unauthorized"), "{}", run.output());
+    assert!(
+        run.output()
+            .contains("denied: this key does not hold deploy-test:create-project"),
+        "{}",
+        run.output()
+    );
 }
 
 #[test]
@@ -311,7 +319,13 @@ fn deploying_an_unregistered_project_is_refused() {
     let run = workspace
         .deploy(CI_KEY)
         .expect_failure("deploy run against an unregistered project");
-    assert!(run.output().contains("Unauthorized"), "{}", run.output());
+    // No binding to name, so the denial stays bare — an unregistered project
+    // must not be a way to learn anything about this instance.
+    assert!(
+        run.output().contains("denied: Unauthorized"),
+        "{}",
+        run.output()
+    );
 }
 
 /// A dropped or missing key must not fall back to anything. The workspace's
@@ -326,5 +340,9 @@ fn deploy_run_with_no_api_key_is_refused() {
     let run = workspace
         .run("", &["run", "deploy.qc"])
         .expect_failure("deploy run with an empty key");
-    assert!(run.output().contains("Unauthorized"), "{}", run.output());
+    assert!(
+        run.output().contains("denied: Unauthorized"),
+        "{}",
+        run.output()
+    );
 }

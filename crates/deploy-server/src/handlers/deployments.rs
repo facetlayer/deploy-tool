@@ -145,9 +145,6 @@ pub fn create_project(
         resource_name,
         outcome,
         previous_resource_name,
-        // auth-center has no resource registry to ask, so a typo cannot be
-        // caught here. See the known gap in docs/auth-integration.md.
-        resource_verified: false,
     })?)
 }
 

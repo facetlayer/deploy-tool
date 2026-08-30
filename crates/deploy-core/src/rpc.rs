@@ -360,10 +360,6 @@ pub struct CreateProjectResult {
     pub outcome: CreateProjectOutcome,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub previous_resource_name: Option<String>,
-    /// False when auth-center could not confirm the resource exists. Today this
-    /// is always false: auth-center has no resource registry to ask, so a typo
-    /// cannot be caught at registration. See docs/auth-integration.md.
-    pub resource_verified: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -824,13 +820,11 @@ mod tests {
             resource_name: "hotlaps-staging".to_string(),
             outcome: CreateProjectOutcome::Rebound,
             previous_resource_name: Some("hotlaps-prod".to_string()),
-            resource_verified: false,
         })
         .unwrap();
         assert_eq!(json["projectName"], "hotlaps-api");
         assert_eq!(json["resourceName"], "hotlaps-staging");
         assert_eq!(json["outcome"], "rebound");
         assert_eq!(json["previousResourceName"], "hotlaps-prod");
-        assert_eq!(json["resourceVerified"], false);
     }
 }
