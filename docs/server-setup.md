@@ -113,8 +113,46 @@ ssh root@host 'systemd-analyze verify /etc/systemd/system/deploy-server.service 
 `deploy` unit on 4715, stop and disable that unit first — two processes cannot
 hold the port, and both would write the same database.
 
+**Both current hosts (do2 and dohl) run the unit under the name `deploy`, not
+`deploy-server`** — inherited from the old tool, which predates this repo. The
+name above is what a fresh install gets; the upgrade tooling detects which of
+the two is present rather than assuming either.
+
 With `Restart=always`, a missing environment variable shows up as a unit that
 restarts in a loop; `journalctl -u deploy-server` names the variable.
+
+## 5a. Upgrading an existing host
+
+Once a host is set up, new builds go out with:
+
+```bash
+install/deploy-to-hosts.sh both          # or: do2 | dohl
+install/deploy-to-hosts.sh do2 --skip-tests
+```
+
+It runs the workspace tests, cross-compiles, uploads *beside* the live binary
+(never over it — a partial transfer onto the running path would leave the host
+with no working server), then hands off to
+[`install/remote-upgrade.sh`](../install/remote-upgrade.sh), which:
+
+- works out whether the unit is `deploy` or `deploy-server`,
+- runs `--version` on the uploaded binary **before** installing it, so a
+  truncated file or a glibc mismatch fails while the working binary is still in
+  place,
+- backs the current binary up to `/root/backups/deploy-server/`,
+- swaps it in with an atomic `mv`,
+- and schedules the restart with `systemd-run --on-active=2`, so the ssh
+  connection closing cannot interrupt it.
+
+The script then verifies each host is `active` and prints the last of its
+journal. Rolling back is copying a file out of `/root/backups/deploy-server/`
+and restarting.
+
+This is the one service that is **not** deployed by GitHub Actions. It cannot
+deploy itself through the deploy service — activating such a deployment restarts
+the process serving it — and automating it from CI would mean giving GitHub a
+key with root on both droplets, which is a much larger blast radius than the
+thing it automates.
 
 Note the binary currently binds `0.0.0.0`, inherited from the old server. That
 is against the do2 convention of binding `127.0.0.1` behind nginx, and there is

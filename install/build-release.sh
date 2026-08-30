@@ -45,6 +45,9 @@ for binary in "${BINARIES[@]}"; do
     echo "  ${OUT_DIR}/${binary}"
 done
 echo
-echo "Install the server with:"
+echo "To upgrade a host that is already set up, prefer:"
+echo "  install/deploy-to-hosts.sh both        # backs up, verifies, detached restart"
+echo
+echo "First install on a new host:"
 echo "  scp ${OUT_DIR}/deploy-server root@<host>:/root/bin/deploy-server"
-echo "  ssh root@<host> 'chmod +x /root/bin/deploy-server && systemctl restart deploy-server'"
+echo "  ssh root@<host> 'chmod +x /root/bin/deploy-server'"
