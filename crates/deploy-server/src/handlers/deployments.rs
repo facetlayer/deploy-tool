@@ -187,8 +187,7 @@ fn ensure_project_registered(conn: &Connection, project_name: &str) -> Result<()
         Some(_) => Ok(()),
         None => Err(anyhow!(
             "Project '{}' is not registered on this server. \
-             Run: deploy create-project {} --resource <resourceName>",
-            project_name,
+             Register it with `auth-setup`, binding it to a resource.",
             project_name
         )),
     }

@@ -82,9 +82,7 @@ scopes and register its binding:
 
 ```bash
 deploy auth-scopes app.qc --resource app-staging
-deploy create-project app \
-  --resource app-staging \
-  --override-dest https://deploy.example.com
+# then register app -> app-staging on this instance, with auth-setup
 ```
 
 Distribute project keys to the clients or CI jobs that need them. Reads and

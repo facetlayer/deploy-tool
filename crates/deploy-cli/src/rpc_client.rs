@@ -233,10 +233,6 @@ impl RpcClient {
     ) -> Result<GetDeploymentTagsResult> {
         self.call(methods::GET_DEPLOYMENT_TAGS, params)
     }
-
-    pub fn create_project(&self, params: &CreateProjectParams) -> Result<CreateProjectResult> {
-        self.call(methods::CREATE_PROJECT, params)
-    }
 }
 
 /// An authorization denial arrives as HTTP 401 whose body is still a JSON-RPC

@@ -49,8 +49,8 @@ pub fn project_scopes(resource_name: &str) -> Vec<ActionScope> {
     out
 }
 
-/// Shared with `create-project`, so both commands hand out the same wording and
-/// the same generated commands.
+/// The report `deploy auth-scopes` prints: the scopes a project's keys need,
+/// and the `auth-setup` commands that create them.
 pub fn print_scope_report(project_name: &str, resource_name: &str) {
     let scopes = project_scopes(resource_name);
 
@@ -75,9 +75,10 @@ pub fn print_scope_report(project_name: &str, resource_name: &str) {
 
     println!();
     println!(
-        "Note: `deploy create-project` is not authorized against '{resource_name}'. It is\n\
-         checked against the instance's administration resource (DEPLOY_ADMIN_RESOURCE),\n\
-         as <admin-resource>:{}.",
+        "Note: registering the project on the deploy instance is a separate step, done\n\
+         with `auth-setup`. It is not authorized against '{resource_name}' — it is checked\n\
+         against the instance's administration resource (DEPLOY_ADMIN_RESOURCE), as\n\
+         <admin-resource>:{}.",
         Action::CreateProject.as_str()
     );
 }
@@ -132,8 +133,8 @@ pub fn print_auth_setup_commands(resource_name: &str, scopes: &[ActionScope]) {
 /// Contacts no server and needs no API key: everything printed is derived from
 /// the config file and the compiled-in method table.
 pub fn auth_scopes(config_file: &Path, resource_name: &str) -> Result<()> {
-    // Same check, and the same wording, as create-project: a colon here is the
-    // three-segment scope that no key can hold.
+    // A colon here is the three-segment scope that no key can hold; the server
+    // rejects it at registration too, but catching it locally costs no round trip.
     if resource_name.contains(':') {
         bail!(
             "--resource must not contain ':' (got {resource_name:?}).\n\
@@ -220,8 +221,8 @@ mod tests {
         assert_eq!(listed, expected);
     }
 
-    /// create-project is gated on the instance's admin resource, so offering it
-    /// as a project scope would mint a grant that authorizes nothing.
+    /// Project registration is gated on the instance's admin resource, so
+    /// offering it as a project scope would mint a grant that authorizes nothing.
     #[test]
     fn create_project_is_not_a_project_scope() {
         let scopes = project_scopes("hotlaps-api-staging");

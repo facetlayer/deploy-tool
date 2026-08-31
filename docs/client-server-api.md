@@ -42,7 +42,8 @@ type Preview = { filesToUpload: FileEntry[]; filesToDelete: string[] };
 | `executeSql` | `{ projectName, sql, database?, callerIsAgent? }` | Columns, rows, and affected count | `execute-sql` |
 
 `createProject` is the only method without an equivalent in the previous
-server. `getNeededFiles` returns a bare array. `verifyDeployment` reports hash
+server, and the only one the `deploy` CLI never calls — projects are registered
+with `auth-setup`. `getNeededFiles` returns a bare array. `verifyDeployment` reports hash
 failure in its result rather than as a JSON-RPC error.
 
 All client-supplied relative paths are checked to remain inside their

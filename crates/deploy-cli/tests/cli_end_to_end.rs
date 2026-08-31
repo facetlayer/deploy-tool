@@ -37,9 +37,9 @@ fn start(root: &TempRoot) -> (StubAuthCenter, DeployServer) {
     (stub, server)
 }
 
-/// The whole CLI flow: register the project, ship it, and confirm what landed.
+/// The whole CLI flow: ship a registered project and confirm what landed.
 #[test]
-fn create_project_then_deploy_run_ships_the_whole_file_set() {
+fn deploy_run_ships_the_whole_file_set() {
     let root = TempRoot::new("cli-run");
     let (_stub, server) = start(&root);
     let workspace = CliWorkspace::new(&root, "basic-app", &server.url());
@@ -49,19 +49,9 @@ fn create_project_then_deploy_run_ships_the_whole_file_set() {
     let bundle = large_content(120 * 1024);
     workspace.write("assets/bundle.js", &bundle);
 
-    workspace
-        .run(
-            ADMIN_KEY,
-            &[
-                "create-project",
-                "basic-app",
-                "--resource",
-                RESOURCE,
-                "--override-dest",
-                &server.url(),
-            ],
-        )
-        .expect_ok("create-project");
+    // Registration is not a `deploy` command any more — it is done with
+    // `auth-setup` — so the suite registers over RPC, as that tool does.
+    create_project(&server.client(ADMIN_KEY), "basic-app", RESOURCE);
 
     let run = workspace.deploy(CI_KEY).expect_ok("deploy run");
     assert!(
@@ -206,7 +196,7 @@ fn rollback_repoints_the_active_deployment() {
     workspace.write("index.js", b"console.log('v2');\n");
     workspace.deploy(CI_KEY).expect_ok("second deploy");
 
-    // ADMIN_KEY holds only create-project, so reading history uses the CI key.
+    // ADMIN_KEY holds only the registration scope, so history uses the CI key.
     let reader = server.client(CI_KEY);
     let listed = reader.ok("listDeployments", json!({ "projectName": "basic-app" }));
     let names: Vec<String> = listed["deployments"]
@@ -283,39 +273,12 @@ fn a_denied_key_cannot_upload_into_someone_elses_deployment() {
 }
 
 #[test]
-fn create_project_needs_the_instance_administration_action() {
-    let root = TempRoot::new("cli-create-project-denied");
-    let (_stub, server) = start(&root);
-    let workspace = CliWorkspace::new(&root, "basic-app", &server.url());
-
-    let run = workspace
-        .run(
-            CI_KEY,
-            &[
-                "create-project",
-                "basic-app",
-                "--resource",
-                RESOURCE,
-                "--override-dest",
-                &server.url(),
-            ],
-        )
-        .expect_failure("create-project with a project-scoped key");
-    assert!(
-        run.output()
-            .contains("denied: this key does not hold deploy-test:create-project"),
-        "{}",
-        run.output()
-    );
-}
-
-#[test]
 fn deploying_an_unregistered_project_is_refused() {
     let root = TempRoot::new("cli-unregistered");
     let (_stub, server) = start(&root);
     let workspace = CliWorkspace::new(&root, "basic-app", &server.url());
 
-    // No create-project call at all.
+    // The project was never registered.
     let run = workspace
         .deploy(CI_KEY)
         .expect_failure("deploy run against an unregistered project");
@@ -325,7 +288,7 @@ fn deploying_an_unregistered_project_is_refused() {
     // "Unauthorized" would leave them nothing to act on.
     let output = run.output();
     assert!(output.contains("is not registered"), "{output}");
-    assert!(output.contains("create-project"), "{output}");
+    assert!(output.contains("auth-setup"), "{output}");
 }
 
 /// A dropped or missing key must not fall back to anything. The workspace's

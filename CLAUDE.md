@@ -32,7 +32,7 @@ crates/deploy-cli/     binary `deploy`
   main.rs              clap command tree
   commands/            one module per subcommand
                        auth_scopes.rs derives the scopes/auth-setup commands
-                       from METHOD_TABLE; create_project.rs reuses it
+                       from METHOD_TABLE
   rpc_client.rs        JSON-RPC client
   api_key.rs           key resolution: secrets-file → env → ~/secrets/deploy.env
 
@@ -78,6 +78,8 @@ the old Rust/TS server, for as long as both exist. So:
   codes and the 50MB body limit all match the old server.
 - `createProject` is the one method no old server answers. That is fine: it is
   new, and a client calling it against an old server gets a method-not-found.
+  This CLI never calls it — projects are registered with `auth-setup` — but the
+  server still serves it.
 
 `db.rs` is the opposite case. Compatibility with the old tool's database is
 explicitly not a requirement (R6), so the schema is a single `create table if
@@ -90,9 +92,9 @@ plain `insert into … select`.
 
 ## Tests
 
-283 tests as of 2026-08-30: 100 in `deploy-core`, 85 + 22 + 12 in
+281 tests as of 2026-08-31: 100 in `deploy-core`, 85 + 22 + 12 in
 `deploy-server` (unit, `tests/authorization.rs`, `tests/deployment_flow.rs`),
-53 + 11 in `deploy-cli` (unit, `tests/cli_end_to_end.rs`).
+52 + 10 in `deploy-cli` (unit, `tests/cli_end_to_end.rs`).
 
 ```bash
 cargo test --workspace          # whole workspace
@@ -130,10 +132,13 @@ rather than just the return values. Follow that pattern for new handlers.
   `auth:admin` — a scope that can mint any key in any project, which a deploy
   instance must never hold — and resources are derived rather than declared, so
   at registration time the resource usually does not exist yet. The decided
-  answer is check-at-first-use: `create-project` rejects a `:` in the resource
-  name and prints the `auth-setup` commands, and a denial names the scope that
-  was checked. See "R1's resource-existence check" in docs/auth-integration.md
-  before trying to add one back.
+  answer is check-at-first-use: `createProject` rejects a `:` in the resource
+  name, and a denial names the scope that was checked. See "R1's
+  resource-existence check" in docs/auth-integration.md before trying to add one
+  back.
+- No `deploy create-project` command. Registration moved to `auth-setup`,
+  which calls `createProject` with an instance-admin key; the `deploy` CLI holds
+  no code path for it and its rpc_client has no method for it.
 - No local key table, and no flag that brings one back. R6 removed
   `secret_key` outright, so there is no fallback to add a bypass to; every
   caller authenticates against auth-center, and an instance without all three

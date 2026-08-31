@@ -230,7 +230,7 @@ fn resource_of_project(
     if !registered {
         return Err(Denial::Unresolved(format!(
             "{}: project '{project_name}' is not registered on this instance; \
-             run `deploy create-project {project_name} --resource <name>`",
+             register it with `auth-setup`, binding '{project_name}' to a resource",
             spec.name
         )));
     }
@@ -252,7 +252,7 @@ fn resource_of_project(
         ))),
         None => Err(Denial::Unresolved(format!(
             "{}: project '{project_name}' has no bound auth-center resource; \
-             run `deploy create-project {project_name} --resource <name>`",
+             bind it to one with `auth-setup`",
             spec.name
         ))),
     }

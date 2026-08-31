@@ -24,13 +24,9 @@ to different resources on separate server instances.
 
 ## Project bindings
 
-Before first use, register the project on each destination:
-
-```bash
-deploy create-project my-app \
-  --resource my-app-staging \
-  --override-dest https://deploy.example.com
-```
+Before first use, register the project on each destination. Registration is
+done with `auth-setup`, which calls the server's `createProject` method; the
+`deploy` CLI has no command for it.
 
 The server stores the binding in `project_resource_binding`; clients cannot
 choose a resource per request. Rebinding requires `--rebind`, and every bind or
@@ -46,7 +42,7 @@ methods resolve a project directly from `projectName` or indirectly from a
 
 `deploy auth-scopes <config.qc> --resource <resource>` prints the current
 scope set and ready-to-run `auth-setup` commands. It is local-only and needs no
-API key. `deploy create-project` prints the same guidance after registration.
+API key.
 
 The suggested deployer role contains `deploy` and `read`. Grant
 `execute-sql` and `rollback` separately. Instance administration keys should

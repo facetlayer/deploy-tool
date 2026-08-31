@@ -41,20 +41,12 @@ directives.
 
 ## Register and authorize the project
 
-Each project must be registered once on each server instance:
+Each project must be registered once on each server instance. Registration is
+done with `auth-setup`, which calls the server's `createProject` method with a
+key holding `<instance-admin-resource>:create-project`. It binds `my-app` to
+`my-app-staging` on that server.
 
-```bash
-deploy create-project my-app \
-  --resource my-app-staging \
-  --override-dest https://deploy.example.com
-```
-
-This command requires a key with
-`<instance-admin-resource>:create-project`. It binds `my-app` to
-`my-app-staging` on that server and prints `auth-setup` commands for the
-project role and key.
-
-You can generate the same authorization setup independently:
+Generate the project's own role and key setup with:
 
 ```bash
 deploy auth-scopes my-app.qc --resource my-app-staging

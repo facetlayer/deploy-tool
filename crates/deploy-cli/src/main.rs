@@ -141,23 +141,6 @@ enum Command {
         resource: String,
     },
 
-    /// Register a project and bind it to an auth-center resource
-    CreateProject {
-        project_name: String,
-
-        /// auth-center resource whose grants gate this project on this instance
-        #[arg(long)]
-        resource: String,
-
-        /// Repoint an already-registered project at a different resource
-        #[arg(long)]
-        rebind: bool,
-
-        /// Destination server URL. Required: there is no config file yet.
-        #[arg(long)]
-        override_dest: Option<String>,
-    },
-
     /// Run `candle check-start` in each active deployment with a candle-config
     StartServices,
 
@@ -260,18 +243,6 @@ fn run() -> Result<()> {
             override_dest,
         } => commands::copy_back::copy_back(&config_file, &filename, override_dest.as_deref()),
 
-        Command::CreateProject {
-            project_name,
-            resource,
-            rebind,
-            override_dest,
-        } => commands::create_project::create_project(
-            &project_name,
-            &resource,
-            rebind,
-            override_dest.as_deref(),
-        ),
-
         Command::AuthScopes {
             config_file,
             resource,
@@ -312,31 +283,6 @@ mod tests {
                 assert_eq!(override_dest.as_deref(), Some("http://x"));
             }
             _ => panic!("expected run"),
-        }
-    }
-
-    #[test]
-    fn create_project_takes_a_resource_and_an_optional_rebind() {
-        let cli = Cli::parse_from([
-            "deploy",
-            "create-project",
-            "hotlaps-api",
-            "--resource",
-            "hotlaps-staging",
-            "--rebind",
-        ]);
-        match cli.command {
-            Command::CreateProject {
-                project_name,
-                resource,
-                rebind,
-                ..
-            } => {
-                assert_eq!(project_name, "hotlaps-api");
-                assert_eq!(resource, "hotlaps-staging");
-                assert!(rebind);
-            }
-            _ => panic!("expected create-project"),
         }
     }
 
