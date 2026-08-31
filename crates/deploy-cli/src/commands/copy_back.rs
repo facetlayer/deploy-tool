@@ -27,7 +27,7 @@ pub fn copy_back(config_file: &Path, filename: &str, override_dest: Option<&str>
         rel_path: filename.to_string(),
     })?;
 
-    let local_path = setup.local_dir.join(filename);
+    let local_path = setup.local_root.join(filename);
     if let Some(parent) = local_path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("Could not create {}", parent.display()))?;

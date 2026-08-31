@@ -13,10 +13,10 @@ struct GitOutput {
     stderr: String,
 }
 
-fn run_git(args: &[&str], local_dir: &Path) -> Result<GitOutput> {
+fn run_git(args: &[&str], local_root: &Path) -> Result<GitOutput> {
     let output = Command::new("git")
         .args(args)
-        .current_dir(local_dir)
+        .current_dir(local_root)
         .output()?;
 
     Ok(GitOutput {
@@ -34,7 +34,7 @@ fn run_git(args: &[&str], local_dir: &Path) -> Result<GitOutput> {
 /// rather than after a long `before-deploy` hook.
 pub fn collect_deployment_tags(
     settings: &ClientSettings,
-    local_dir: &Path,
+    local_root: &Path,
 ) -> Result<DeploymentTags> {
     let mut tags = DeploymentTags::new();
 
@@ -42,22 +42,22 @@ pub fn collect_deployment_tags(
         return Ok(tags);
     }
 
-    let rev_parse = run_git(&["rev-parse", "HEAD"], local_dir)?;
+    let rev_parse = run_git(&["rev-parse", "HEAD"], local_root)?;
     if !rev_parse.ok {
         bail!(
             "track-git-commit is enabled but 'git rev-parse HEAD' failed in {}: {}",
-            local_dir.display(),
+            local_root.display(),
             rev_parse.stderr
         );
     }
     let commit = rev_parse.stdout;
 
     if !settings.allow_dirty_git_tree {
-        let status = run_git(&["status", "--porcelain"], local_dir)?;
+        let status = run_git(&["status", "--porcelain"], local_root)?;
         if !status.ok {
             bail!(
                 "track-git-commit is enabled but 'git status' failed in {}: {}",
-                local_dir.display(),
+                local_root.display(),
                 status.stderr
             );
         }
@@ -86,7 +86,7 @@ pub fn collect_deployment_tags(
                 "Refusing to deploy: the git working tree at {} has uncommitted changes.\n\
                  {shown}{more}\n\n\
                  Commit or stash these changes, or add 'allow-dirty-git-tree' to deploy-settings.",
-                local_dir.display()
+                local_root.display()
             );
         }
     }
@@ -95,7 +95,7 @@ pub fn collect_deployment_tags(
 
     // A detached HEAD reports the branch as "HEAD", which is not worth
     // recording.
-    let branch_result = run_git(&["rev-parse", "--abbrev-ref", "HEAD"], local_dir)?;
+    let branch_result = run_git(&["rev-parse", "--abbrev-ref", "HEAD"], local_root)?;
     if branch_result.ok && !branch_result.stdout.is_empty() && branch_result.stdout != "HEAD" {
         tags.insert(tag_names::GIT_BRANCH.to_string(), branch_result.stdout);
     }
@@ -105,8 +105,8 @@ pub fn collect_deployment_tags(
 
 /// The local `HEAD` commit, or `None` when this is not a usable git checkout.
 /// Backs `check-deployed-commit`.
-pub fn local_head_commit(local_dir: &Path) -> Option<String> {
-    let result = run_git(&["rev-parse", "HEAD"], local_dir).ok()?;
+pub fn local_head_commit(local_root: &Path) -> Option<String> {
+    let result = run_git(&["rev-parse", "HEAD"], local_root).ok()?;
     if !result.ok || result.stdout.is_empty() {
         return None;
     }

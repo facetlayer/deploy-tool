@@ -77,7 +77,7 @@ pub fn check_deployed_commit(
     })?;
 
     let deployed_commit = result.tags.get(tag_names::GIT_COMMIT).cloned();
-    let local_commit = local_head_commit(&setup.local_dir);
+    let local_commit = local_head_commit(&setup.local_root);
 
     if json_output {
         let matches_local = match (&deployed_commit, &local_commit) {

@@ -22,7 +22,7 @@ pub struct ClientSetup {
     pub client: RpcClient,
     pub project_name: String,
     pub dest_url: String,
-    pub local_dir: PathBuf,
+    pub local_root: PathBuf,
     pub config_text: String,
     pub settings: ClientSettings,
     /// The local file list, already security-scanned.
@@ -40,7 +40,7 @@ pub fn setup_client(config_file: &Path, override_dest: Option<&str>) -> Result<C
         .with_context(|| format!("Could not read config file: {}", config_file.display()))?;
 
     let settings = config::parse_client_settings(&config_text);
-    let local_dir = config::resolve_local_dir(config_file, &settings, None)?;
+    let local_root = config::resolve_local_root(config_file, &settings, None)?;
 
     let project_name = settings.project_name.clone().ok_or_else(|| {
         anyhow!(
@@ -60,7 +60,7 @@ pub fn setup_client(config_file: &Path, override_dest: Option<&str>) -> Result<C
         })?,
     };
 
-    let files = resolve_local_files(&local_dir, &config_text, &settings)?;
+    let files = resolve_local_files(&local_root, &config_text, &settings)?;
 
     let mut client = RpcClient::new(&dest_url);
     match find_api_key(settings.secrets_file.as_deref()) {
@@ -80,7 +80,7 @@ pub fn setup_client(config_file: &Path, override_dest: Option<&str>) -> Result<C
         client,
         project_name,
         dest_url,
-        local_dir,
+        local_root,
         config_text,
         settings,
         files,
@@ -90,11 +90,11 @@ pub fn setup_client(config_file: &Path, override_dest: Option<&str>) -> Result<C
 /// Resolves the include/exclude rules against the local root and validates the
 /// result against the security scan.
 pub fn resolve_local_files(
-    local_dir: &Path,
+    local_root: &Path,
     config_text: &str,
     settings: &ClientSettings,
 ) -> Result<FileList> {
-    let files = deploy_core::filelist::resolve_file_list_from_config(local_dir, config_text)?;
+    let files = deploy_core::filelist::resolve_file_list_from_config(local_root, config_text)?;
     security::validate_file_list(&files.rel_paths(), &settings.ignore_security_scan)?;
     Ok(files)
 }

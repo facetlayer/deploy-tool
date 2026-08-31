@@ -39,14 +39,14 @@ pub fn run(config_file: &Path, override_dest: Option<&str>) -> Result<()> {
 
     // Collect deployment tags (including the git commit) before doing any work,
     // so a dirty tree fails fast instead of after the build.
-    let tags = collect_deployment_tags(&setup.settings, &setup.local_dir)?;
+    let tags = collect_deployment_tags(&setup.settings, &setup.local_root)?;
     for (name, value) in &tags {
         println!("Deployment tag: {name}={value}");
     }
 
     for command in &setup.settings.before_deploy_commands {
         println!("Running before-deploy command: {command}");
-        let status = run_shell_command(command, &setup.local_dir)?;
+        let status = run_shell_command(command, &setup.local_root)?;
         if !status.success() {
             bail!(
                 "before-deploy command failed with exit code: {}",
@@ -61,7 +61,7 @@ pub fn run(config_file: &Path, override_dest: Option<&str>) -> Result<()> {
     // The file list is resolved again after the hooks ran: a `before-deploy`
     // build step is usually what produces the files being shipped.
     let sources = crate::client_setup::resolve_local_files(
-        &setup.local_dir,
+        &setup.local_root,
         &setup.config_text,
         &setup.settings,
     )?;
@@ -107,7 +107,7 @@ pub fn run(config_file: &Path, override_dest: Option<&str>) -> Result<()> {
         &deploy_name,
         &needed_files,
         &sources,
-        &setup.local_dir,
+        &setup.local_root,
     )?;
 
     println!("Finished uploading files ({}s)", timer.check_elapsed_secs());
@@ -171,7 +171,7 @@ fn upload_all(
     deploy_name: &str,
     needed_files: &[FileEntry],
     sources: &deploy_core::filelist::FileList,
-    local_dir: &Path,
+    local_root: &Path,
 ) -> Result<()> {
     let next_index = AtomicUsize::new(0);
     let errors: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
@@ -195,7 +195,7 @@ fn upload_all(
                     file_entry.rel_path
                 );
 
-                if let Err(err) = upload_one(client, deploy_name, file_entry, sources, local_dir) {
+                if let Err(err) = upload_one(client, deploy_name, file_entry, sources, local_root) {
                     errors
                         .lock()
                         .unwrap()
@@ -226,7 +226,7 @@ fn upload_one(
     deploy_name: &str,
     file_entry: &FileEntry,
     sources: &deploy_core::filelist::FileList,
-    local_dir: &Path,
+    local_root: &Path,
 ) -> Result<()> {
     // The server may only ask for paths that were in the manifest we sent; a
     // path we do not recognize means the two sides disagree about the file set.
@@ -234,7 +234,7 @@ fn upload_one(
         bail!("Couldn't find a requested relPath: {}", file_entry.rel_path);
     }
 
-    let local_path = local_dir.join(&file_entry.rel_path);
+    let local_path = local_root.join(&file_entry.rel_path);
     let content = std::fs::read(&local_path)
         .with_context(|| format!("Could not read {}", local_path.display()))?;
 

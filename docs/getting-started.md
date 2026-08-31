@@ -34,8 +34,10 @@ exclude dist/**/*.map
 ignore data
 ```
 
-Paths are relative to the config directory unless `local-dir` changes the
-root. See [config-reference.md](config-reference.md) for all directives.
+Paths are relative to the config directory unless `local-root` changes the
+root; the root it resolves to must be at or below the directory you run the
+command from. See [config-reference.md](config-reference.md) for all
+directives.
 
 ## Register and authorize the project
 

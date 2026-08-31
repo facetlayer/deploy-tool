@@ -14,8 +14,8 @@ use crate::commands::run::{send_manifest_batches, MANIFEST_BATCH_SIZE};
 pub fn preview_deploy_files(config_file: &Path) -> Result<()> {
     let config_text = std::fs::read_to_string(config_file)?;
     let settings = config::parse_client_settings(&config_text);
-    let local_dir = config::resolve_local_dir(config_file, &settings, None)?;
-    let files = crate::client_setup::resolve_local_files(&local_dir, &config_text, &settings)?;
+    let local_root = config::resolve_local_root(config_file, &settings, None)?;
+    let files = crate::client_setup::resolve_local_files(&local_root, &config_text, &settings)?;
 
     println!(
         "Project: {}",
@@ -25,7 +25,7 @@ pub fn preview_deploy_files(config_file: &Path) -> Result<()> {
         "Destination: {}",
         settings.dest_url.as_deref().unwrap_or("(unset)")
     );
-    println!("Local directory: {}", local_dir.display());
+    println!("Local directory: {}", local_root.display());
     println!("Files to upload ({}):", files.len());
     println!();
 
