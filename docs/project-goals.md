@@ -1,158 +1,70 @@
-# deploy-tool — project goals
+# System overview
 
-Written 2026-08-29, at the start of the rewrite.
+`deploy-tool` is a small deployment service for hosts that run applications
+directly rather than through a container orchestrator. The CLI uploads a
+declared set of files; the server verifies them, activates the deployment, and
+runs configured post-deploy actions.
 
-## What this is
+## Components
 
-A deployment service and its companion CLI. A deployment is: upload a set of
-files to a server, then trigger server-side actions (restarts, SQL migrations,
-static-site swaps). This repo replaces the existing tool at `~/tools/deploy`.
+| Crate | Purpose |
+|---|---|
+| `deploy-core` | Shared `.qc` parsing, file selection, hashing, RPC types, and authorization method table. |
+| `deploy-cli` | The `deploy` command. Builds manifests, uploads missing content, activates releases, and provides history, rollback, copy-back, and SQL commands. |
+| `deploy-server` | The JSON-RPC service. Stores deployment state in SQLite and files in a configured deployment directory. |
 
-Two artifacts ship from here:
+Shared behavior belongs in `deploy-core`, so the client and server cannot
+interpret the config or wire protocol differently.
 
-- **`deploy-server`** — the backend. One instance per host. Owns a deployments
-  directory on disk and a SQLite database, serves the RPC surface the CLI
-  calls, and performs the activation actions.
-- **`deploy`** — the CLI. Reads a project's `.qc` file, computes the file set,
-  uploads what the server does not already have, and drives the deployment
-  through to activation.
+## Deployment model
 
-## Why rewrite rather than extend
+Each project has a `.qc` file containing its destination, file rules, and
+hooks. A deployment follows this sequence:
 
-Three reasons, in order of weight:
+1. The CLI runs local `before-deploy` commands and builds a content-hash
+   manifest.
+2. The server creates a deployment record and reports which files it does not
+   already have.
+3. The CLI uploads only the missing content.
+4. The server removes untracked destination files according to the config,
+   verifies hashes, and activates the deployment.
+5. Server-side `after-deploy` commands run.
 
-1. **Auth.** The current server authenticates against a local `secret_key`
-   table: a flat list of key strings with no owner, scope, expiry or audit
-   trail. Every key can do everything on the instance. The interim
-   auth-service integration that exists today has a fallback
-   (`allowed ?? true`) that makes the entire file-upload and activation path
-   effectively unguarded. That has to go, and it is not a patch — it is a
-   different authorization model.
-2. **One language.** The current tool is split: a Rust server under `rust/`
-   and a TypeScript CLI under `src/`. The RPC types, the `.qc` parser and the
-   file-list logic exist in both, and drift between them. Everything here is
-   Rust, with the shared pieces in one crate used by both binaries.
-3. **Staging and production are not distinguishable today.** See below.
+Deployments are versioned by default. `update-in-place` instead reuses one
+directory; it is appropriate for services whose process configuration points
+at a fixed path, but it cannot restore an earlier directory during rollback.
 
-## Goal 1 — everything in Rust
+## Authorization model
 
-A Cargo workspace. No TypeScript, no Node in the build or the runtime.
+Every remote operation is authorized by auth-center. A project must first be
+registered on each deploy-server instance and bound to a resource stored in
+that instance's database. The same project can therefore use different
+resources in different environments.
 
-- A shared crate holding the RPC types, the `.qc` parser, and the file-list /
-  hashing logic — defined once, used by both binaries.
-- The `.qc` parser is copied into this repo (the existing Rust implementation
-  under `~/tools/deploy/rust/src/qc/` is the starting point). `.qc` stays the
-  project definition format; the file format itself is not changing.
-- The CLI is a Rust binary, distributable as a single static-ish executable,
-  with no `node_modules` on the deploying machine.
+Scopes have the form `<resource>:<action>`. The supported actions are
+`deploy`, `read`, `execute-sql`, `rollback`, and `create-project`. The server
+has no local API-key table and fails closed if auth-center cannot return an
+explicit positive decision.
 
-## Goal 2 — tight integration with auth-center
+See [auth-integration.md](auth-integration.md) for the complete model.
 
-`~/auth-center` is the account and permission service. The deploy service
-becomes a client of it, per
-`~/auth-center/docs/deploy-service-requirements.md`, which is the normative
-spec for this part. In summary:
+## Storage and compatibility
 
-- **A project is bound to a named auth-center resource**, stored server-side
-  in the deploy instance's own database. The binding is never derived from a
-  naming convention and never taken from the client.
-- **Projects are created explicitly**: `deploy create-project <name>
-  --resource <resourceName>`. This is a behavior change from the old tool,
-  where a project came into existence implicitly on first deploy. Creating a
-  project requires a key holding `create-project` on the instance's
-  administration resource, and registration fails if auth-center does not
-  recognize the named resource — so a typo surfaces at registration, not as a
-  mass denial at the next deploy.
-- **Every authenticated call resolves to a concrete resource and is checked
-  against it.** Calls carrying only a deploy name resolve through the
-  deployment table to their project. A call that cannot be resolved to a
-  resource is *denied*, never allowed.
-- **Actions are distinguished**, not collapsed into "can deploy": at minimum
-  `deploy`, `read`, `sql`, `rollback`, and `create-project`. `sql` in
-  particular must be grantable independently — a CI key that ships builds
-  should not be able to run arbitrary SQL.
-- **Fail closed.** Network error, timeout, non-2xx or a malformed
-  introspection response all deny.
-- **Cache positive results briefly**, keyed by key hash + resource + action, so
-  one deploy does not make one introspection call per uploaded file. Never
-  cache negative results.
-- **No local key table.** The old server's `secret_key` table — a flat list of
-  strings with no owner, scope, expiry or audit trail, where every key could do
-  everything — is removed outright, not deprecated. There is no fallback path
-  and no flag to re-enable it, so no bypass is left behind on an instance that
-  has cut over. This is the largest security win in the rewrite.
-- **Record who authorized each deployment**, so `history` can answer "who
-  shipped this".
+The server stores metadata in `db.sqlite` and payloads under its configured
+deployments directory. Its schema can open the old service's database and adds
+the resource-binding tables and deployment-attribution columns when missing.
+Existing deployment and active-deployment rows remain intact.
 
-### The staging/production problem this solves
+The JSON-RPC wire format remains compatible with the previous client and
+server where methods overlap. New fields are optional. `createProject` is new
+and is not supported by the old server.
 
-`hotlaps/deploy/api-staging.qc` and `api-prod.qc` both declare
-`project-name=hotlaps-api`; they differ only in `dest-url`. Any scheme
-deriving permission from the project name grants both identically. Because the
-resource binding lives in each deploy instance's own database, do2 and dohl can
-require different resources for the same project name:
+## Operating principles
 
-| Instance | Project | Required resource |
-|---|---|---|
-| do2 | `hotlaps-api` | `hotlaps-staging` |
-| dohl | `hotlaps-api` | `hotlaps-prod` |
-
-A staging key presented to dohl is checked against `hotlaps-prod`, does not
-hold it, and is denied.
-
-## Goal 3 — same deployment flow
-
-The flow the CLI drives is unchanged, and existing `.qc` files keep working:
-
-1. Read the `.qc` file; resolve include/exclude globs into a file list.
-2. Run `before-deploy` actions locally.
-3. Create a deployment; ask the server which files it does not already have
-   (content-hash dedup); upload only those, single-shot or multipart.
-4. Build and finalize the manifest; verify.
-5. Activate — swap the live directory, run `after-deploy` server actions.
-6. Rollback remains available as a distinct action.
-
-## Goal 4 — server instance setup
-
-Setting up an instance configures:
-
-- the **deployments directory** on disk (as before), and
-- the **auth-center URL**, plus this instance's own service key.
-
-The auth-center URL is configuration, not a constant. It is usually
-`https://auth.apf1.dev`, but it is **never hardcoded** — do2 and dohl each get
-their own setting and their own service key, so the keys can be revoked
-independently. Both live in the instance's environment file, not in the unit
-file.
-
-There is deliberately no "environment" or "server name" setting. The
-staging/production distinction is carried entirely by the per-project resource
-binding.
-
-## Goal 5 — replace the old tool
-
-The end state is the old service and CLI retired, and this one installed on
-**do2** and **dohl** (see `~/biz/do2` and `~/biz/dohl`).
-
-Because there is no legacy key path, enabling an instance is a **cutover, not a
-gradual migration**: register every project against its resource and distribute
-the new keys *first*, then rebuild or import the database, set the environment
-variables and restart. do2 first; dohl only after do2 has run clean for a
-while.
-
-Backwards compatibility with the old schema is explicitly not a requirement, so
-the database may be rebuilt. Two things that costs, both of which have to be
-planned for rather than discovered:
-
-- Rebuilding discards `active_deployment` and the `deployment` rows — the
-  record of what is actually running. Either redeploy everything on the
-  instance afterwards, or import those three tables from the old database.
-- Fail-closed means auth-center downtime is deploy downtime, and auth-center is
-  itself deployed by this tool. That circular dependency needs a tested way in
-  before the first cutover, not during the first outage.
-
-## Current constraint
-
-auth-center is still being built. Work proceeds against the documented
-contract as far as it can go; the parts that need a real running auth service
-to verify will block until one exists.
+- Preview every `update-in-place` deployment. Server-generated files require
+  `ignore` or `ignore-destination` rules or they will be deleted.
+- Give CI only `deploy` and, when needed, `read`; grant SQL and rollback
+  separately.
+- Keep auth-center credentials in the server environment file and client keys
+  in a secrets file or environment variable.
+- Use `--disable-api-key-check` only for local development.
