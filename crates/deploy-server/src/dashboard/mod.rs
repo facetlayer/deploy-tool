@@ -93,7 +93,11 @@ async fn login(State(state): State<Arc<AppState>>) -> Response {
         return unavailable();
     };
     let Some(auth) = crate::auth_center::global() else {
-        return (StatusCode::SERVICE_UNAVAILABLE, "auth-center is not configured").into_response();
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "auth-center is not configured",
+        )
+            .into_response();
     };
 
     let pkce = oauth::new_pkce();
@@ -132,11 +136,18 @@ async fn callback(
         return unavailable();
     };
     let Some(auth) = crate::auth_center::global() else {
-        return (StatusCode::SERVICE_UNAVAILABLE, "auth-center is not configured").into_response();
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "auth-center is not configured",
+        )
+            .into_response();
     };
 
     if !params.error.is_empty() {
-        return sign_in_failed(&format!("auth-center refused the sign-in: {}", params.error));
+        return sign_in_failed(&format!(
+            "auth-center refused the sign-in: {}",
+            params.error
+        ));
     }
 
     // The state must be one this server issued and has not already redeemed.

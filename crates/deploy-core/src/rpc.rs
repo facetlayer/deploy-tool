@@ -773,7 +773,11 @@ mod tests {
             methods::ROLLBACK,
             methods::CREATE_PROJECT,
         ] {
-            assert_ne!(lookup_method(name).unwrap().action, Action::AdminRead, "{name}");
+            assert_ne!(
+                lookup_method(name).unwrap().action,
+                Action::AdminRead,
+                "{name}"
+            );
         }
         assert_eq!(
             lookup_method(methods::CREATE_PROJECT).unwrap().action,

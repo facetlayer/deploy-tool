@@ -39,13 +39,11 @@ impl DashboardConfig {
         let client_secret = non_empty("DEPLOY_OAUTH_CLIENT_SECRET");
         match (public_url, client_id, client_secret) {
             (None, None, None) => Ok(None),
-            (Some(public_url), Some(client_id), Some(client_secret)) => {
-                Ok(Some(DashboardConfig {
-                    public_url: public_url.trim_end_matches('/').to_string(),
-                    client_id,
-                    client_secret,
-                }))
-            }
+            (Some(public_url), Some(client_id), Some(client_secret)) => Ok(Some(DashboardConfig {
+                public_url: public_url.trim_end_matches('/').to_string(),
+                client_id,
+                client_secret,
+            })),
             _ => Err(anyhow!(
                 "the dashboard needs all of DEPLOY_PUBLIC_URL, DEPLOY_OAUTH_CLIENT_ID and \
                  DEPLOY_OAUTH_CLIENT_SECRET, or none of them. Set all three to serve the \
@@ -81,8 +79,8 @@ pub struct Pkce {
 
 pub fn new_pkce() -> Pkce {
     let verifier = format!("{}{}", random_token(), random_token());
-    let challenge =
-        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+    let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(Sha256::digest(verifier.as_bytes()));
     Pkce {
         verifier,
         challenge,

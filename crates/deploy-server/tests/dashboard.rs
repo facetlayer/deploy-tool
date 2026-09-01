@@ -23,7 +23,10 @@ const DASHBOARD_TOKEN: &str = "at_dashboard_user";
 fn grants() -> Vec<KeyGrant> {
     vec![
         grant(ADMIN_KEY, &["deploy-test:**", "hotlaps-staging:**"]),
-        grant(PROJECT_KEY, &["hotlaps-staging:deploy", "hotlaps-staging:read"]),
+        grant(
+            PROJECT_KEY,
+            &["hotlaps-staging:deploy", "hotlaps-staging:read"],
+        ),
         grant(DASHBOARD_TOKEN, &["deploy-test:admin-read"]),
     ]
 }
@@ -127,7 +130,10 @@ fn login_redirects_to_auth_center_with_pkce_and_the_admin_read_scope() {
         "{location}"
     );
     assert!(location.contains("client_id=oc_test"), "{location}");
-    assert!(location.contains("code_challenge_method=S256"), "{location}");
+    assert!(
+        location.contains("code_challenge_method=S256"),
+        "{location}"
+    );
     // The redirect URI is derived from DEPLOY_PUBLIC_URL and has to match what
     // auth-center registered, exactly.
     assert!(
@@ -147,11 +153,7 @@ fn a_callback_with_a_state_this_server_never_issued_is_refused() {
 
     // Without this check, a callback URL from anywhere would sign the visitor
     // in as whoever the attacker holds a code for.
-    let (status, _, body) = get(
-        &server,
-        "/oauth/callback?code=abc&state=never-issued",
-        None,
-    );
+    let (status, _, body) = get(&server, "/oauth/callback?code=abc&state=never-issued", None);
     assert_eq!(status, 403);
     assert!(body.contains("expired or was already used"), "{body}");
     // And no session cookie came back with it.
@@ -307,7 +309,8 @@ fn a_project_key_cannot_read_the_instance() {
 
     server.client(PROJECT_KEY).denied("listProjects", json!({}));
     assert!(
-        stub.scopes_asked().contains(&"deploy-test:admin-read".to_string()),
+        stub.scopes_asked()
+            .contains(&"deploy-test:admin-read".to_string()),
         "listProjects must be checked against the instance resource, not a project: {:?}",
         stub.scopes_asked()
     );

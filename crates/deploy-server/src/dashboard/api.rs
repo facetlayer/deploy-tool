@@ -122,20 +122,19 @@ pub async fn logout(State(state): State<Arc<AppState>>, headers: HeaderMap) -> R
         };
         // Drop the token at auth-center too, so signing out here is not merely
         // forgetting a cookie while a live token sits in the database.
-        if let (Some(token), Some(config), Some(auth)) = (
-            token,
-            state.dashboard.clone(),
-            crate::auth_center::global(),
-        ) {
+        if let (Some(token), Some(config), Some(auth)) =
+            (token, state.dashboard.clone(), crate::auth_center::global())
+        {
             oauth::revoke(auth.base_url(), &config, &token);
         }
     })
     .await;
 
     let mut response = Json(json!({ "ok": true })).into_response();
-    response
-        .headers_mut()
-        .insert(axum::http::header::SET_COOKIE, clear_cookie().parse().unwrap());
+    response.headers_mut().insert(
+        axum::http::header::SET_COOKIE,
+        clear_cookie().parse().unwrap(),
+    );
     response
 }
 

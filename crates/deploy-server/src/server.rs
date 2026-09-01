@@ -222,7 +222,10 @@ pub async fn start_server(options: StartServerOptions) -> Result<()> {
 
     let dashboard_config = crate::dashboard::oauth::DashboardConfig::from_env()?;
     match &dashboard_config {
-        Some(config) => println!("Dashboard at {} (sign-in via auth-center)", config.public_url),
+        Some(config) => println!(
+            "Dashboard at {} (sign-in via auth-center)",
+            config.public_url
+        ),
         None => println!("Dashboard disabled (DEPLOY_PUBLIC_URL / DEPLOY_OAUTH_* are unset)"),
     }
 
