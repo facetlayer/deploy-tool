@@ -13,6 +13,12 @@
 #
 # Environment overrides: DEPLOY_CLI_VERSION, DEPLOY_CLI_BIN_DIR.
 #
+# No token is needed: the repo is public and the release assets download
+# anonymously. If DEPLOY_CLI_GITHUB_TOKEN, GH_TOKEN or GITHUB_TOKEN is set (in
+# that order) the download goes through the REST API with it instead, which is
+# what keeps this working if the repo is ever made private again — an asset of
+# a private release is reachable only by numeric id through the API.
+#
 # This installs the client only. The `deploy-server` daemon is not released as
 # an artifact; it is built and shipped with install/build-release.sh.
 
@@ -23,6 +29,8 @@ BIN_DIR="${DEPLOY_CLI_BIN_DIR:-$HOME/.local/bin}"
 VERSION="${DEPLOY_CLI_VERSION:-latest}"
 ACTION="install"
 BINARY="deploy"
+TOKEN="${DEPLOY_CLI_GITHUB_TOKEN:-${GH_TOKEN:-${GITHUB_TOKEN:-}}}"
+API="https://api.github.com/repos/$REPO"
 
 say() { printf '%s\n' "$*"; }
 err() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -62,23 +70,64 @@ detect_target() {
   printf '%s-%s' "$arch_part" "$os_part"
 }
 
+# curl against the REST API with the token attached. Only called when TOKEN is set.
+api() { curl -fsSL -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github+json" "$@"; }
+
+no_release() {
+  if [ -n "$TOKEN" ]; then
+    err "could not determine the latest release of $REPO. Check that the token can read the repo, or pass --version <tag>."
+  fi
+  err "could not determine the latest release of $REPO. The repo is private: set GITHUB_TOKEN (or GH_TOKEN) to a token that can read it. See --help."
+}
+
 resolve_version() {
   if [ "$VERSION" != "latest" ]; then
     printf '%s' "$VERSION"
     return
   fi
-  # Follow the /releases/latest redirect and read the tag off the final URL.
-  # With no published releases GitHub redirects to /releases instead of
-  # /releases/tag/<tag>, so require the /tag/ segment before trusting the result.
-  url="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest" 2>/dev/null || true)"
-  case "$url" in
-    */tag/*) tag="${url##*/tag/}" ;;
-    *) tag="" ;;
-  esac
-  case "$tag" in
-    ''|*/*) err "could not determine the latest release of $REPO. Check https://github.com/$REPO/releases, or pass --version <tag>." ;;
+  if [ -n "$TOKEN" ]; then
+    tag="$(api "$API/releases/latest" 2>/dev/null \
+      | sed -n 's/.*"tag_name" *: *"\([^"]*\)".*/\1/p' | head -n 1)"
+  else
+    # Follow the /releases/latest redirect and read the tag off the final URL.
+    # With no published releases GitHub redirects to /releases instead of
+    # /releases/tag/<tag>, so require the /tag/ segment before trusting the result.
+    url="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest" 2>/dev/null || true)"
+    case "$url" in
+      */tag/*) tag="${url##*/tag/}" ;;
+      *) tag="" ;;
+    esac
+  fi
+  case "${tag:-}" in
+    ''|*/*) no_release ;;
   esac
   printf '%s' "$tag"
+}
+
+# Download one release asset by name to $2. A private repo serves assets only
+# through the API, by numeric id — the browser_download_url 404s for anyone not
+# signed in — so with a token we look the id up first.
+download_asset() {
+  name="$1"; dest="$2"
+  if [ -z "$TOKEN" ]; then
+    curl -fsSL "https://github.com/$REPO/releases/download/$TAG/$name" -o "$dest"
+    return
+  fi
+  if [ -z "${RELEASE_JSON:-}" ]; then
+    RELEASE_JSON="$TMP_DIR/release.json"
+    api "$API/releases/tags/$TAG" -o "$RELEASE_JSON" \
+      || err "no release tagged '$TAG' in $REPO, or the token cannot read it."
+  fi
+  # In an asset object "id" precedes "name", so the last id seen when the name
+  # matches is that asset's. Exiting at the match keeps the uploader's own "id"
+  # (which comes after the name) from overwriting it.
+  id="$(awk -v want="\"name\": \"$name\"" '
+    /"id":/ { if (match($0, /[0-9]+/)) id = substr($0, RSTART, RLENGTH) }
+    index($0, want) { print id; exit }
+  ' "$RELEASE_JSON")"
+  [ -n "$id" ] || return 1
+  curl -fsSL -H "Authorization: Bearer $TOKEN" -H "Accept: application/octet-stream" \
+    "$API/releases/assets/$id" -o "$dest"
 }
 
 do_uninstall() {
@@ -106,7 +155,6 @@ need uname
 TARGET="$(detect_target)"
 TAG="$(resolve_version)"
 ARCHIVE="deploy-$TAG-$TARGET.tar.gz"
-BASE_URL="https://github.com/$REPO/releases/download/$TAG"
 
 say "==> Installing deploy $TAG ($TARGET)"
 
@@ -115,11 +163,11 @@ cleanup() { rm -rf "$TMP_DIR"; }
 trap cleanup EXIT INT TERM
 
 say "==> Downloading $ARCHIVE"
-curl -fsSL "$BASE_URL/$ARCHIVE" -o "$TMP_DIR/$ARCHIVE" \
+download_asset "$ARCHIVE" "$TMP_DIR/$ARCHIVE" \
   || err "download failed. Is there a release named '$TAG' with an asset for $TARGET?"
 
 # Verify the checksum when a SHA256SUMS asset and a local sha256 tool are both available.
-if curl -fsSL "$BASE_URL/SHA256SUMS" -o "$TMP_DIR/SHA256SUMS" 2>/dev/null; then
+if download_asset SHA256SUMS "$TMP_DIR/SHA256SUMS" 2>/dev/null; then
   if command -v shasum >/dev/null 2>&1; then
     sha_cmd="shasum -a 256"
   elif command -v sha256sum >/dev/null 2>&1; then
