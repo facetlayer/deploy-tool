@@ -1,5 +1,8 @@
-# Tests every push and pull request. The workspace is pure Rust and rusqlite is
-# `bundled`, so there is nothing to install beyond the toolchain.
+# Tests every push and pull request. The Rust side needs nothing beyond the
+# toolchain (rusqlite is `bundled`), but the dashboard SPA does: `dist/` is
+# gitignored and rust-embed reads it at compile time, so without a frontend
+# build the embedded dashboard is empty and tests/dashboard.rs sees 404s where
+# it expects the real page.
 name: ci
 
 on:
@@ -16,6 +19,20 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: crates/deploy-server/dashboard/package-lock.json
+
+      # Must run before cargo: build.rs declares rerun-if-changed on dist/, so
+      # the embed picks this up, but only if the bundle is already on disk.
+      - name: Build the dashboard
+        working-directory: crates/deploy-server/dashboard
+        run: |
+          npm ci
+          npm run build
 
       - name: Install Rust
         run: |
