@@ -1,0 +1,128 @@
+# Publishes prebuilt `deploy` CLI binaries to a GitHub Release when a version
+# tag is pushed:
+#
+#     git tag v0.1.0 && git push origin v0.1.0
+#
+# The CLI only. `deploy-server` still ships from a laptop with
+# install/build-release.sh — see the "Drop the release workflow" commit; the
+# reason this one is back is that CI jobs in other repos need a `deploy` they
+# can install without a Rust toolchain (install.sh at the repo root).
+#
+# Linux builds run on ubuntu-22.04 (glibc 2.35) rather than a newer image so
+# the binary also starts on hosts with an older glibc than the runner's. The
+# droplets are Ubuntu 24.04 (glibc 2.39), so anything built here runs there.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build a release for (e.g. v0.1.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04-arm
+          - target: aarch64-apple-darwin
+            os: macos-14
+          # Cross-compiled from the arm64 runner: GitHub retired the macos-13
+          # (Intel) image, so a native x86_64 macOS job waits forever for a
+          # runner that no longer exists. Apple's clang and SDK target both
+          # architectures, which is all rusqlite's bundled SQLite needs.
+          - target: x86_64-apple-darwin
+            os: macos-14
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          rustup target add ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build the CLI
+        run: cargo build --release --locked -p deploy-cli --target ${{ matrix.target }}
+
+      # Only for the targets that can run here. The tag is the source of truth
+      # for the version, so a mismatch means the workspace Cargo.toml was not
+      # bumped and the release would ship a binary that lies about itself.
+      - name: Check the binary runs and reports the tagged version
+        if: matrix.target != 'x86_64-apple-darwin'
+        run: |
+          set -euo pipefail
+          got=$(./target/${{ matrix.target }}/release/deploy --version | awk '{print $2}')
+          want="${{ github.event.inputs.tag || github.ref_name }}"
+          want="${want#v}"
+          echo "binary reports '$got', tag says '$want'"
+          if [ "$got" != "$want" ]; then
+            echo "::error::version mismatch: the tag is $want but the binary reports $got." \
+                 "Bump the workspace Cargo.toml version to match the tag."
+            exit 1
+          fi
+
+      - name: Package
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          NAME="deploy-${TAG}-${{ matrix.target }}"
+          STAGE="$(mktemp -d)/$NAME"
+          mkdir -p "$STAGE"
+          cp target/${{ matrix.target }}/release/deploy "$STAGE/"
+          cp README.md "$STAGE/"
+          tar -czf "$NAME.tar.gz" -C "$(dirname "$STAGE")" "$NAME"
+          echo "archive=$NAME.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: ${{ steps.package.outputs.archive }}
+          if-no-files-found: error
+
+  release:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      # install.sh verifies the archive it downloaded against this file.
+      - name: Generate checksums
+        working-directory: artifacts
+        run: sha256sum *.tar.gz > SHA256SUMS
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" artifacts/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG" \
+            --generate-notes \
+            || gh release upload "$TAG" artifacts/* --repo "$GITHUB_REPOSITORY" --clobber

@@ -64,7 +64,37 @@ D1.
 
 ## Install
 
-Build both binaries from the workspace:
+The CLI installs from a GitHub Release, no Rust toolchain needed:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/facetlayer/deploy-tool/main/install.sh | sh
+```
+
+It lands in `~/.local/bin` by default; `--bin-dir <dir>` and `--version <tag>`
+change that, `--uninstall` removes it. Releases are cut by pushing a version
+tag (`git tag v0.1.0 && git push origin v0.1.0`), which runs
+[`.github/workflows/release.yml`](.github/workflows/release.yml) — macOS and
+Linux, x86_64 and arm64.
+
+Inside a GitHub Action, the same line is the whole setup step. The script
+appends its bin dir to `$GITHUB_PATH`, so later steps just call `deploy`:
+
+```yaml
+- name: Install the deploy CLI
+  run: curl -fsSL https://raw.githubusercontent.com/facetlayer/deploy-tool/main/install.sh | sh
+
+- name: Deploy
+  env:
+    DEPLOY_API_KEY: ${{ secrets.DEPLOY_API_KEY }}
+  run: deploy run config.qc
+```
+
+Pin a release with `| sh -s -- --version v0.1.0` when a job should not follow
+`latest`. Homebrew is available on GitHub's runners, but a tap costs a `brew
+update` and a formula bump per release to deliver the same single binary this
+fetches in about a second, so there is no formula.
+
+Building from source instead — both binaries, from the workspace:
 
 ```bash
 cargo build --release

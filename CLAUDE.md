@@ -150,6 +150,11 @@ rather than just the return values. Follow that pattern for new handlers.
   caller authenticates against auth-center, and an instance without all three
   auth variables refuses to start. `--disable-api-key-check` is for local
   development, not a migration path.
+- No Homebrew formula or tap. `install.sh` fetches one binary from a GitHub
+  Release in about a second and works unchanged on a laptop and on a runner; a
+  tap would add a per-release formula bump for the same result. `release.yml`
+  also ships the CLI only — `deploy-server` still goes out from a laptop via
+  `install/build-release.sh`.
 - `deploy-server serve` binds `0.0.0.0`, inherited from the old server. The do2
   convention is `127.0.0.1`; there is no bind flag yet. The dashboard does not
   change this — it is reached through nginx like everything else, and direct
