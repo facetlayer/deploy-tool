@@ -5,6 +5,7 @@
 
 mod auth_center;
 mod authz;
+mod dashboard;
 mod db;
 mod handlers;
 mod manifest;

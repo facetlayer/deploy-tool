@@ -1,0 +1,5 @@
+node_modules/
+# Built by `pnpm run build` and embedded into the binary at compile time; see
+# build.rs. Never committed — the binary is the artifact, not this directory.
+dist/
+tsconfig.tsbuildinfo

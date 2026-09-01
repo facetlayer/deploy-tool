@@ -220,10 +220,21 @@ pub async fn start_server(options: StartServerOptions) -> Result<()> {
 
     println!("Using deploy directory: {}", deploy_dir.display());
 
-    let state = Arc::new(AppState::new(conn, options.disable_api_key_check));
+    let dashboard_config = crate::dashboard::oauth::DashboardConfig::from_env()?;
+    match &dashboard_config {
+        Some(config) => println!("Dashboard at {} (sign-in via auth-center)", config.public_url),
+        None => println!("Dashboard disabled (DEPLOY_PUBLIC_URL / DEPLOY_OAUTH_* are unset)"),
+    }
+
+    let state = Arc::new(
+        AppState::new(conn, options.disable_api_key_check).with_dashboard(dashboard_config),
+    );
 
     let app = Router::new()
         .route("/json-rpc", post(handle_json_rpc))
+        // The dashboard's routes go on last so that `/json-rpc` above cannot be
+        // shadowed by its SPA fallback.
+        .merge(crate::dashboard::routes())
         // The client sends whole files as base64, so allow large bodies.
         .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024))
         .with_state(state);

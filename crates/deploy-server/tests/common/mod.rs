@@ -415,6 +415,11 @@ fn base_command(state_dir: &Path) -> Command {
         "DEPLOY_AUTH_URL",
         "DEPLOY_AUTH_KEY",
         "DEPLOY_ADMIN_RESOURCE",
+        // Inheriting a partial set of these would make the server refuse to
+        // start, so they are cleared like the rest rather than left to chance.
+        "DEPLOY_PUBLIC_URL",
+        "DEPLOY_OAUTH_CLIENT_ID",
+        "DEPLOY_OAUTH_CLIENT_SECRET",
         "XDG_STATE_HOME",
     ] {
         command.env_remove(name);

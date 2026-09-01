@@ -27,6 +27,11 @@ crates/deploy-server/  binary `deploy-server`
   handlers/            one module per group of RPC methods
   paths.rs             path-traversal guards for client-supplied relPath
   preserve.rs, manifest.rs, sql.rs, state.rs
+  dashboard/           the read-only web dashboard: oauth.rs (BFF client
+                       against auth-center), session.rs, api.rs, mod.rs
+                       (routes + the SPA, embedded via rust-embed)
+  dashboard/ (crate root, not src/)  the Vite + React source; dist/ is built
+                       into the binary and never committed
 
 crates/deploy-cli/     binary `deploy`
   main.rs              clap command tree
@@ -36,7 +41,7 @@ crates/deploy-cli/     binary `deploy`
   rpc_client.rs        JSON-RPC client
   api_key.rs           key resolution: secrets-file → env → ~/secrets/deploy.env
 
-crates/deploy-server/tests/  authorization.rs, deployment_flow.rs
+crates/deploy-server/tests/  authorization.rs, deployment_flow.rs, dashboard.rs
 crates/deploy-cli/tests/     cli_end_to_end.rs
 ```
 
@@ -92,9 +97,10 @@ plain `insert into … select`.
 
 ## Tests
 
-281 tests as of 2026-08-31: 100 in `deploy-core`, 85 + 22 + 12 in
-`deploy-server` (unit, `tests/authorization.rs`, `tests/deployment_flow.rs`),
-52 + 10 in `deploy-cli` (unit, `tests/cli_end_to_end.rs`).
+291 tests as of 2026-08-31: 100 in `deploy-core`, 85 + 22 + 12 + 10 in
+`deploy-server` (unit, `tests/authorization.rs`, `tests/deployment_flow.rs`,
+`tests/dashboard.rs`), 52 + 10 in `deploy-cli` (unit,
+`tests/cli_end_to_end.rs`).
 
 ```bash
 cargo test --workspace          # whole workspace
@@ -145,4 +151,11 @@ rather than just the return values. Follow that pattern for new handlers.
   auth variables refuses to start. `--disable-api-key-check` is for local
   development, not a migration path.
 - `deploy-server serve` binds `0.0.0.0`, inherited from the old server. The do2
-  convention is `127.0.0.1`; there is no bind flag yet.
+  convention is `127.0.0.1`; there is no bind flag yet. The dashboard does not
+  change this — it is reached through nginx like everything else, and direct
+  access to the port is still the firewall's problem.
+- No dashboard route that writes. The dashboard is `admin-read` and nothing
+  else, deliberately: this server deploys auth-center and the dashboard signs
+  in through auth-center, so the circular dependency is only tolerable while
+  the CLI over SSH remains able to do everything the dashboard can. See
+  docs/dashboard.md.

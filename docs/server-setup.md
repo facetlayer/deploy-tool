@@ -51,7 +51,12 @@ DEPLOY_AUTH_KEY=<service key with auth:introspect>
 DEPLOY_ADMIN_RESOURCE=host-deploy
 ```
 
-All three values are required. The server exits if one is absent. Do not use
+All three values are required. The server exits if one is absent.
+
+Three further variables — `DEPLOY_PUBLIC_URL`, `DEPLOY_OAUTH_CLIENT_ID` and
+`DEPLOY_OAUTH_CLIENT_SECRET` — turn on the read-only web dashboard. They are
+optional as a group; setting some but not all is refused. See
+[dashboard.md](dashboard.md). Do not use
 `--disable-api-key-check` outside local development.
 
 ## systemd

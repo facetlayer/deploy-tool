@@ -35,6 +35,11 @@ pub struct AppState {
     /// `serve --disable-api-key-check`. Read by the transport, never by a
     /// handler.
     pub disable_api_key_check: bool,
+
+    /// `None` when this instance serves no dashboard, which is every instance
+    /// that has not been given the three `DEPLOY_OAUTH_*`/`DEPLOY_PUBLIC_URL`
+    /// variables. The dashboard routes are not mounted at all in that case.
+    pub dashboard: Option<crate::dashboard::oauth::DashboardConfig>,
 }
 
 impl AppState {
@@ -42,7 +47,16 @@ impl AppState {
         AppState {
             conn: Mutex::new(conn),
             disable_api_key_check,
+            dashboard: None,
         }
+    }
+
+    pub fn with_dashboard(
+        mut self,
+        dashboard: Option<crate::dashboard::oauth::DashboardConfig>,
+    ) -> AppState {
+        self.dashboard = dashboard;
+        self
     }
 
     /// A poisoned mutex is recovered rather than propagated: the panic that

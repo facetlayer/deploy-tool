@@ -8,6 +8,7 @@ pub mod activate;
 pub mod cleanup;
 pub mod deployments;
 pub mod files;
+pub mod projects;
 pub mod sql_methods;
 pub mod tags;
 pub mod uploads;
@@ -70,6 +71,9 @@ pub fn dispatch(
         methods::LIST_DATABASES => sql_methods::list_databases(state, params),
 
         methods::GET_DEPLOYMENT_TAGS => tags::get_deployment_tags(state, params),
+
+        methods::LIST_PROJECTS => projects::list_projects(state, params),
+        methods::GET_PROJECT => projects::get_project(state, params),
 
         _ => Err(anyhow!(METHOD_NOT_FOUND)),
     }

@@ -14,6 +14,7 @@ A deploy scope is exactly `<resource>:<action>`:
 | `execute-sql` | Execute SQL against configured project databases. |
 | `rollback` | Reactivate an earlier versioned deployment. |
 | `create-project` | Register or rebind projects on an instance. |
+| `admin-read` | Read every project on the instance. Used by the web dashboard. |
 
 The action is the final segment. Generate scopes with `deploy auth-scopes`
 instead of constructing them manually. A resource must not contain `:`.
@@ -34,9 +35,20 @@ rebind is recorded in `project_resource_binding_history` with the authorizing
 key when available.
 
 `createProject` is authorized against the instance's
-`DEPLOY_ADMIN_RESOURCE`, for example `host-deploy:create-project`. All other
-methods resolve a project directly from `projectName` or indirectly from a
-`deployName`, then use that project's stored binding.
+`DEPLOY_ADMIN_RESOURCE`, for example `host-deploy:create-project`. So are
+`listProjects` and `getProject`, the dashboard's two reads, against
+`host-deploy:admin-read`. All other methods resolve a project directly from
+`projectName` or indirectly from a `deployName`, then use that project's stored
+binding.
+
+`admin-read` exists rather than reusing `read` because the dashboard's question
+is "what is on this server", which has no project to resolve against. A
+per-project `read` grant cannot answer it: a viewer would need one grant per
+project and would still never learn about a project nobody had thought to grant
+them. Note that `getProject` takes a project name as a *filter*, not as the
+thing that gates it — it is checked against the instance either way. Holding
+`admin-read` grants no deploy, no rollback and no SQL, on this or any
+project.
 
 ## Creating roles and keys
 
@@ -47,6 +59,15 @@ API key.
 The suggested deployer role contains `deploy` and `read`. Grant
 `execute-sql` and `rollback` separately. Instance administration keys should
 hold only `<admin-resource>:create-project`.
+
+Dashboard viewers are admin *users* rather than keys, and hold
+`<admin-resource>:admin-read`. Grant it through a role so that adding a viewer
+is a role assignment rather than a scope edit:
+
+```bash
+auth-setup create-role deploy-viewer --project deploy \
+  --scope do2-deploy:admin-read
+```
 
 Resources are derived from scopes in auth-center rather than explicitly
 registered. The deploy server therefore validates the resource name's shape

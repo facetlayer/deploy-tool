@@ -71,6 +71,26 @@ create table if not exists active_deployment(
 -- R1: the resource a project's keys are checked against. Its own table rather
 -- than a column on `project`, so the binding can be rebound and audited
 -- independently of the project row.
+-- Dashboard browser sessions and the half-finished logins that produce them.
+-- Neither is deployment state: dropping both tables signs everyone out and
+-- costs nothing else, which is the intended blast radius for a visibility-only
+-- feature that is explicitly not on the recovery path.
+create table if not exists dashboard_session(
+  session_id text primary key,
+  access_token text not null,
+  username text not null,
+  subject text not null,
+  created_at datetime not null,
+  expires_at integer not null
+);
+
+create table if not exists dashboard_login(
+  state text primary key,
+  code_verifier text not null,
+  return_to text not null,
+  created_at integer not null
+);
+
 create table if not exists project_resource_binding(
   project_name text primary key,
   resource_name text not null,

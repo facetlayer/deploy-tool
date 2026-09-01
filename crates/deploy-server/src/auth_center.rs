@@ -164,6 +164,13 @@ impl AuthCenter {
         &self.config.admin_resource
     }
 
+    /// auth-center's base URL. The dashboard's OAuth client builds its
+    /// authorize and token URLs from the same value the introspection path
+    /// uses, so there is one place an instance says where auth-center is.
+    pub fn base_url(&self) -> &str {
+        &self.config.base_url
+    }
+
     /// Asks auth-center whether `presented_key` holds
     /// `<resource>:<action>`.
     ///
@@ -235,14 +242,21 @@ impl AuthCenter {
 
         // key_id is what attribution is recorded under (R7). auth-center always
         // sends it for an active key; fall back rather than fail the call.
+        //
+        // An OAuth access token identifies a *user* instead, so it answers with
+        // `sub` and `username` and carries neither of the key fields. Reading
+        // both shapes here is what lets a dashboard session run through the
+        // same decision an API key does, and still be attributable to a person.
         let identity = KeyIdentity {
             key_id: payload
                 .get("key_id")
+                .or_else(|| payload.get("sub"))
                 .and_then(Json::as_str)
                 .unwrap_or("unknown")
                 .to_string(),
             name: payload
                 .get("name")
+                .or_else(|| payload.get("username"))
                 .and_then(Json::as_str)
                 .map(str::to_string),
         };

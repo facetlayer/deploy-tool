@@ -19,11 +19,13 @@ clap = { version = "4", features = ["derive", "env"] }
 globset = "0.4"
 hex = "0.4"
 rand = "0.8"
+rust-embed = { version = "8", features = ["mime-guess"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.10"
 thiserror = "2"
+urlencoding = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
 ureq = { version = "2", default-features = false, features = ["json", "tls"] }
 

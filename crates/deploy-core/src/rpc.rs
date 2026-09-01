@@ -296,6 +296,61 @@ pub struct ListDeploymentsResult {
     pub active_deploy_name: Option<String>,
 }
 
+// --- dashboard reads (admin-read) ------------------------------------------
+//
+// These are new in this version, so there is no old peer to stay compatible
+// with and they are plain camelCase throughout — including the fields that
+// `DeploymentInfo` has to spell in snake_case for the old CLI's sake.
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListProjectsParams {}
+
+/// One project as the dashboard lists it: enough to render a row without a
+/// second call per project.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectSummary {
+    pub project_name: String,
+    pub created_at: String,
+    /// The `project_resource_binding` row. `None` means the project exists but
+    /// has never been bound, which is exactly the state in which every call
+    /// for it is denied — so the dashboard shows it rather than hiding it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_deploy_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_since: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_deployed_at: Option<String>,
+    pub deployment_count: i64,
+    /// Who authorized the deployment that is currently live (R7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_authorized_by: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListProjectsResult {
+    pub projects: Vec<ProjectSummary>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetProjectParams {
+    pub project_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetProjectResult {
+    pub project: ProjectSummary,
+    pub deployments: Vec<DeploymentInfo>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GetDeploymentTagsParams {
@@ -388,14 +443,18 @@ pub mod methods {
     pub const ROLLBACK: &str = "rollback";
     /// New in this version; no old server answers it.
     pub const CREATE_PROJECT: &str = "createProject";
+    /// New in this version, for the dashboard. No old server answers either.
+    pub const LIST_PROJECTS: &str = "listProjects";
+    pub const GET_PROJECT: &str = "getProject";
 }
 
 // ---------------------------------------------------------------------------
 // Authorization table
 // ---------------------------------------------------------------------------
 
-/// The five actions from R3. `execute-sql` is separate from `deploy` on
-/// purpose: a CI key that ships builds must not be able to run arbitrary SQL.
+/// The five actions from R3, plus `admin-read`. `execute-sql` is separate from
+/// `deploy` on purpose: a CI key that ships builds must not be able to run
+/// arbitrary SQL.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Action {
@@ -404,6 +463,18 @@ pub enum Action {
     ExecuteSql,
     Rollback,
     CreateProject,
+    /// Read every project on the instance at once, for the dashboard.
+    ///
+    /// It is checked against the instance administration resource rather than
+    /// any project, because the whole point is to answer "what is on this
+    /// server" before you know which projects there are. `read` cannot do that
+    /// job: it is per-project by construction, so a dashboard viewer would
+    /// need one grant per project and would still never learn about a project
+    /// nobody had thought to grant them.
+    ///
+    /// It reads and nothing else. Holding it grants no deploy, no rollback and
+    /// no SQL, on this or any project.
+    AdminRead,
 }
 
 impl Action {
@@ -417,6 +488,7 @@ impl Action {
             Action::ExecuteSql => "execute-sql",
             Action::Rollback => "rollback",
             Action::CreateProject => "create-project",
+            Action::AdminRead => "admin-read",
         }
     }
 }
@@ -575,6 +647,19 @@ pub const METHOD_TABLE: &[MethodSpec] = &[
         Action::CreateProject,
         ProjectResolution::InstanceAdministration,
     ),
+    // admin-read: instance-wide, so these resolve to the admin resource and
+    // never to a project — including `getProject`, which takes a project name
+    // as a *filter* rather than as the thing that gates it.
+    spec(
+        methods::LIST_PROJECTS,
+        Action::AdminRead,
+        ProjectResolution::InstanceAdministration,
+    ),
+    spec(
+        methods::GET_PROJECT,
+        Action::AdminRead,
+        ProjectResolution::InstanceAdministration,
+    ),
 ];
 
 const fn spec(name: &'static str, action: Action, resolution: ProjectResolution) -> MethodSpec {
@@ -618,6 +703,8 @@ mod tests {
             methods::LIST_DEPLOYMENTS,
             methods::ROLLBACK,
             methods::CREATE_PROJECT,
+            methods::LIST_PROJECTS,
+            methods::GET_PROJECT,
         ];
         for name in names {
             assert!(
@@ -667,6 +754,27 @@ mod tests {
             lookup_method(methods::ROLLBACK).unwrap().action,
             Action::Rollback
         );
+        // The dashboard reads the whole instance, so it is checked against the
+        // instance and not against any one project's binding.
+        for name in [methods::LIST_PROJECTS, methods::GET_PROJECT] {
+            let spec = lookup_method(name).unwrap();
+            assert_eq!(spec.action, Action::AdminRead, "{name}");
+            assert_eq!(
+                spec.resolution,
+                ProjectResolution::InstanceAdministration,
+                "{name}"
+            );
+        }
+        // admin-read reads. It is not a spelling of any action that writes.
+        for name in [
+            methods::CREATE_DEPLOYMENT,
+            methods::ACTIVATE_DEPLOYMENT,
+            methods::EXECUTE_SQL,
+            methods::ROLLBACK,
+            methods::CREATE_PROJECT,
+        ] {
+            assert_ne!(lookup_method(name).unwrap().action, Action::AdminRead, "{name}");
+        }
         assert_eq!(
             lookup_method(methods::CREATE_PROJECT).unwrap().action,
             Action::CreateProject
