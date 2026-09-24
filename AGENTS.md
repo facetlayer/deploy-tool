@@ -164,3 +164,19 @@ rather than just the return values. Follow that pattern for new handlers.
   in through auth-center, so the circular dependency is only tolerable while
   the CLI over SSH remains able to do everything the dashboard can. See
   docs/dashboard.md.
+
+## Commits
+
+Save a git commit after each chunk of work (a finished task, a fix, or a
+self-contained step) without waiting to be asked. Stage the specific files you
+changed rather than `git add -A`. If a pre-commit hook modifies files, re-stage
+them and retry once.
+
+Message style: imperative mood, capital first letter, no trailing period,
+subject only (no body). Be specific, and say why or what it affects, not just
+what changed. Separate related changes with semicolons.
+
+ - `Build the dashboard SPA in ci before the Rust tests; dist/ is gitignored, so a fresh clone embeds nothing`
+ - `Rename local-dir to local-root; reject a root outside the working directory, and the old name outright`
+
+PR body: include a description.
