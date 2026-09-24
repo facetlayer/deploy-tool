@@ -177,4 +177,4 @@ deploy run         my-app.qc
 - [docs/server-setup.md](docs/server-setup.md) — standing up an instance.
 - [docs/project-goals.md](docs/project-goals.md) — what this is and why it exists (normative).
 - [docs/auth-integration.md](docs/auth-integration.md) — the authorization model (normative).
-- [CLAUDE.md](CLAUDE.md) — orientation for working in this repo.
+- [AGENTS.md](AGENTS.md) — orientation for working in this repo.
