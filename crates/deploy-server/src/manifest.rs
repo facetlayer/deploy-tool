@@ -81,6 +81,7 @@ mod tests {
         let manifest = vec![FileEntry {
             rel_path: "../escaped/file.txt".to_string(),
             sha: "aaa".to_string(),
+            executable: None,
         }];
         setup_empty_directories(&dir, &manifest).unwrap();
 

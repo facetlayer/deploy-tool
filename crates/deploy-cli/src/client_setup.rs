@@ -11,6 +11,7 @@ use std::time::Instant;
 use anyhow::{anyhow, Context, Result};
 use deploy_core::config::{self, ClientSettings};
 use deploy_core::filelist::FileList;
+use deploy_core::filemode;
 use deploy_core::hash::get_file_hash;
 use deploy_core::rpc::FileEntry;
 use deploy_core::security;
@@ -116,9 +117,15 @@ pub fn source_manifest(files: &FileList) -> Result<Vec<FileEntry>> {
                 )
             })?;
 
+        let meta = std::fs::metadata(&file.source_path)
+            .with_context(|| format!("Could not stat {}", file.source_path.display()))?;
+
         manifest.push(FileEntry {
             rel_path: file.rel_path.clone(),
             sha,
+            // Off unix there is no bit to read, so say nothing rather than
+            // tell the server to clear it.
+            executable: cfg!(unix).then(|| filemode::is_executable(&meta)),
         });
     }
 

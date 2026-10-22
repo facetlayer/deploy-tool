@@ -116,15 +116,12 @@ guardrail, not a security boundary.
 
 ## Server-side scripts
 
-Declare the executables a caller may run on the server, and make them
-executable after each deploy:
+Declare the executables a caller may run on the server. Deploys carry the
+execute bit, so make each one executable locally (`chmod +x bin/migrate`):
 
 ```text
 allowed-server-side-scripts
   bin/migrate
-
-after-deploy
-  shell(chmod +x bin/migrate)
 ```
 
 Then run one in the active deployment:

@@ -204,25 +204,14 @@ fn resolve_executable(deploy_dir: &Path, script: &str) -> Result<PathBuf> {
     if !meta.is_file() {
         return Err(anyhow!("{script} is not a regular file"));
     }
-    if !is_executable(&meta) {
+    if !deploy_core::filemode::is_executable(&meta) {
         return Err(anyhow!(
-            "{script} is not executable. Uploaded files keep no permission bits; add \
-             `shell(chmod +x {script})` to after-deploy."
+            "{script} is not executable on the server. Deploys carry the execute bit, \
+             so `chmod +x {script}` locally and deploy again."
         ));
     }
 
     Ok(real_path)
-}
-
-#[cfg(unix)]
-fn is_executable(meta: &std::fs::Metadata) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    meta.permissions().mode() & 0o111 != 0
-}
-
-#[cfg(not(unix))]
-fn is_executable(_meta: &std::fs::Metadata) -> bool {
-    true
 }
 
 fn describe_key(authorized_by: Option<&AuthorizedKey>) -> String {

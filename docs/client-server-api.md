@@ -11,7 +11,7 @@ additions must be optional so old peers can ignore them.
 ## Shared types
 
 ```typescript
-type FileEntry = { relPath: string; sha: string };
+type FileEntry = { relPath: string; sha: string; executable?: boolean };
 type DeploymentTags = Record<string, string>;
 type Preview = { filesToUpload: FileEntry[]; filesToDelete: string[] };
 type RunOnServerResult = {
@@ -61,7 +61,9 @@ most 256 entries and 64 KiB in total.
 `createProject` and `runOnServer` have no equivalent in the previous server,
 which answers them with method-not-found. `createProject` is also the only
 method the `deploy` CLI never calls — projects are registered with
-`auth-setup`. `getNeededFiles` returns a bare array. `verifyDeployment` reports hash
+`auth-setup`. `getNeededFiles` returns a bare array. `FileEntry.executable` is optional;
+`verifyDeployment` sets or clears the execute bit of each entry that carries
+it and leaves the rest alone. `verifyDeployment` reports hash
 failure in its result rather than as a JSON-RPC error.
 
 All client-supplied relative paths are checked to remain inside their

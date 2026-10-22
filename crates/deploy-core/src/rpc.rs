@@ -21,6 +21,11 @@ use serde_json::Value as Json;
 pub struct FileEntry {
     pub rel_path: String,
     pub sha: String,
+    /// Whether the client's copy has an execute bit; see `filemode`. Additive:
+    /// an old client sends nothing and the server leaves the file's mode
+    /// alone, and an old server ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executable: Option<bool>,
 }
 
 /// Arbitrary key/value metadata attached to a deployment by the client.
@@ -1007,6 +1012,7 @@ mod tests {
             source_file_manifest: vec![FileEntry {
                 rel_path: "src/index.ts".to_string(),
                 sha: "abc".to_string(),
+                executable: None,
             }],
             source_file_config: "deploy-settings\n".to_string(),
             tags: None,
@@ -1016,6 +1022,18 @@ mod tests {
         assert_eq!(json["sourceFileManifest"][0]["relPath"], "src/index.ts");
         assert_eq!(json["sourceFileConfig"], "deploy-settings\n");
         assert!(json.get("tags").is_none());
+        // Absent rather than null, so the entry is byte-identical to what an
+        // old client sends.
+        assert!(json["sourceFileManifest"][0].get("executable").is_none());
+    }
+
+    #[test]
+    fn file_entry_executable_is_optional_both_ways() {
+        let old: FileEntry = serde_json::from_str(r#"{"relPath":"a","sha":"s"}"#).unwrap();
+        assert_eq!(old.executable, None);
+        let new: FileEntry =
+            serde_json::from_str(r#"{"relPath":"a","sha":"s","executable":true}"#).unwrap();
+        assert_eq!(new.executable, Some(true));
     }
 
     #[test]

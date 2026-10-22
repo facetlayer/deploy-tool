@@ -202,6 +202,21 @@ pub fn verify_deployment(state: &AppState, params: &Json) -> Result<Json> {
         return verify_error(first_error);
     }
 
+    // Uploads are written with fs::write, which creates 0644 files and keeps
+    // an existing file's mode, so the execute bit has to be set from the
+    // manifest. Over the whole manifest, not just what was uploaded: a file
+    // whose content is unchanged may still have had its bit flipped. Done
+    // here, before activation, so after-deploy hooks see the shipped modes.
+    for (file, (rel_path, _, local_path)) in manifest.iter().zip(&targets) {
+        if let Some(executable) = file.executable {
+            if let Err(error) = apply_executable_bit(local_path, executable) {
+                return verify_error(format!(
+                    "Could not set the execute bit on {rel_path}: {error}"
+                ));
+            }
+        }
+    }
+
     println!(
         "Deployment verification complete: {} - all {} files verified",
         deploy_name, total
@@ -218,6 +233,30 @@ pub fn verify_deployment(state: &AppState, params: &Json) -> Result<Json> {
         status: VerifyStatus::Success,
         error: None,
     })?)
+}
+
+/// Sets or clears a deployed file's execute bit. A symlink is left alone: the
+/// server never writes one, so it was made on the server, and chmod would
+/// follow it to wherever it points.
+#[cfg(unix)]
+fn apply_executable_bit(path: &std::path::Path, executable: bool) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let meta = std::fs::symlink_metadata(path)?;
+    if !meta.file_type().is_file() {
+        return Ok(());
+    }
+    let mode = meta.permissions().mode();
+    let wanted = deploy_core::filemode::with_executable(mode, executable);
+    if wanted != mode {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(wanted))?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn apply_executable_bit(_path: &std::path::Path, _executable: bool) -> Result<()> {
+    Ok(())
 }
 
 /// Verification failures are reported in-band, not as a JSON-RPC error, so the

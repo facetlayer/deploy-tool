@@ -726,6 +726,66 @@ mod tests {
         assert_eq!(result["status"], "success");
     }
 
+    fn mode_of(path: &Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        fs::symlink_metadata(path).unwrap().permissions().mode() & 0o7777
+    }
+
+    fn set_mode(path: &Path, mode: u32) {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+    }
+
+    /// The content is already in place in every case — as it is for an
+    /// unchanged file on a redeploy — so the bit has to come from the manifest
+    /// alone.
+    #[test]
+    fn verify_applies_the_manifests_execute_bits() {
+        let server = setup("verify-exec");
+        let dir = server.deploy_dir("exec-project");
+        for name in ["set", "clear", "old-client", "link-target"] {
+            write(&dir.join(name), name);
+        }
+        set_mode(&dir.join("set"), 0o644);
+        set_mode(&dir.join("clear"), 0o755);
+        set_mode(&dir.join("old-client"), 0o755);
+        set_mode(&dir.join("link-target"), 0o644);
+        std::os::unix::fs::symlink(dir.join("link-target"), dir.join("link")).unwrap();
+
+        let entry = |name: &str, executable: Option<bool>| {
+            let mut entry = json!({ "relPath": name, "sha": sha_of(&dir.join(name)) });
+            if let Some(executable) = executable {
+                entry["executable"] = json!(executable);
+            }
+            entry
+        };
+        let deploy_name = server.create_deployment(
+            "exec-project",
+            json!([
+                entry("set", Some(true)),
+                entry("clear", Some(false)),
+                entry("old-client", None),
+                entry("link", Some(true)),
+            ]),
+            &config_for("exec-project", ""),
+        );
+
+        let result = server
+            .call(
+                methods::VERIFY_DEPLOYMENT,
+                json!({ "deployName": deploy_name }),
+            )
+            .unwrap();
+        assert_eq!(result["status"], "success", "{result}");
+
+        assert_eq!(mode_of(&dir.join("set")), 0o755);
+        assert_eq!(mode_of(&dir.join("clear")), 0o644);
+        // No opinion from the client, so none from the server.
+        assert_eq!(mode_of(&dir.join("old-client")), 0o755);
+        // chmod through a symlink would change whatever it points at.
+        assert_eq!(mode_of(&dir.join("link-target")), 0o644);
+    }
+
     #[test]
     fn verify_reports_wrong_contents_in_band() {
         let server = setup("verify-wrong");

@@ -120,9 +120,6 @@ configured database and remain inside the deployment directory.
 allowed-server-side-scripts
   bin/migrate
   scripts/report.sh
-
-after-deploy
-  shell(chmod +x bin/migrate scripts/report.sh)
 ```
 
 Each entry is an executable, relative to the deployment directory, that
@@ -136,8 +133,9 @@ The server reads the list from the config recorded with the **active**
 deployment, so adding a script takes a deploy, and a deployed-but-inactive
 config cannot widen it. At run time the server also requires that the file
 exists, is a regular file with an execute bit, and still lies inside the
-deployment directory after symlinks are resolved. Uploaded files carry no
-permission bits, so set the execute bit in `after-deploy` as above.
+deployment directory after symlinks are resolved. Deploys carry each file's
+execute bit (see [Execute bits](#execute-bits)), so `chmod +x` the script
+locally.
 
 A script runs:
 
@@ -178,6 +176,25 @@ preserve-existing-files-max-age 7d
 the new manifest. Uploaded files still replace same-named files.
 `preserve-existing-files-max-age` removes preserved files older than the
 specified duration; supported suffixes are `s`, `m`, `h`, `d`, and `w`.
+
+## Execute bits
+
+Each deployed file keeps whether it is executable locally. The CLI records the
+bit in the manifest and the server applies it during `verifyDeployment`, before
+activation, so `after-deploy` hooks and `deploy run-on-server` see the shipped
+modes. It is applied to every file in the manifest, so a redeploy that only
+flips a bit (`chmod +x`, nothing uploaded) still takes effect.
+
+Only the execute bit travels. Setting it grants execute wherever the server's
+copy grants read (`0644` becomes `0755`); owner, group and read/write bits stay
+as the server created them. Symlinks in the destination are not followed. A
+deploy from an older CLI, or from a non-unix machine, sends no bit and leaves
+the server's modes unchanged.
+
+Under `update-in-place`, a file that was made executable on the server by an
+`after-deploy` `chmod` but is not executable locally loses the bit at verify
+time and gets it back when the hook runs. Make it executable in the repository
+instead.
 
 ## Deployment modes
 

@@ -14,6 +14,7 @@ crates/deploy-core/    shared library, no binary
   filelist.rs          include/exclude/ignore rules, directory walks, leftovers
   glob.rs              picomatch-compatible matching
   hash.rs              file content hashes
+  filemode.rs          the execute bit a manifest entry carries
   security.rs          client-side scan that blocks .env / keys / credentials
   sqlnames.rs          table-name extraction, for routing `deploy sql`
   rpc.rs               wire types, method names, the authorization action table
@@ -97,9 +98,9 @@ plain `insert into … select`.
 
 ## Tests
 
-321 tests as of 2026-10-21: 108 in `deploy-core`, 98 + 23 + 12 + 10 in
+326 tests as of 2026-10-21: 111 in `deploy-core`, 99 + 23 + 12 + 10 in
 `deploy-server` (unit, `tests/authorization.rs`, `tests/deployment_flow.rs`,
-`tests/dashboard.rs`), 58 + 12 in `deploy-cli` (unit,
+`tests/dashboard.rs`), 58 + 13 in `deploy-cli` (unit,
 `tests/cli_end_to_end.rs`).
 
 ```bash

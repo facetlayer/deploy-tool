@@ -358,6 +358,7 @@ mod tests {
         let entry = |i: usize| FileEntry {
             rel_path: format!("file-{i}"),
             sha: "sha".to_string(),
+            executable: None,
         };
         let manifest: Vec<FileEntry> = (0..1001).map(entry).collect();
 

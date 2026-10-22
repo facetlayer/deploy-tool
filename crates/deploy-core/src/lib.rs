@@ -7,6 +7,7 @@
 
 pub mod config;
 pub mod filelist;
+pub mod filemode;
 pub mod glob;
 pub mod hash;
 pub mod qc;

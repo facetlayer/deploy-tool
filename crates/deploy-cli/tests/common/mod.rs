@@ -76,6 +76,19 @@ impl CliWorkspace {
         write_file(&self.project_dir.join(rel_path), contents);
     }
 
+    /// `chmod +x` / `chmod -x` on a workspace file.
+    pub fn set_executable(&self, rel_path: &str, executable: bool) {
+        use std::os::unix::fs::PermissionsExt;
+        let path = self.project_dir.join(rel_path);
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        let mode = if executable {
+            mode | 0o111
+        } else {
+            mode & !0o111
+        };
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+    }
+
     pub fn remove(&self, rel_path: &str) {
         std::fs::remove_file(self.project_dir.join(rel_path)).unwrap();
     }

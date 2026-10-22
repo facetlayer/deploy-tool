@@ -322,18 +322,16 @@ fn run_on_server_runs_an_allowed_script_and_relays_its_output() {
     let config = read_file(&workspace.config());
     workspace.write(
         "deploy.qc",
-        format!(
-            "{config}\nallowed-server-side-scripts\n  bin/report\n\n\
-             # Uploaded files carry no permission bits.\n\
-             after-deploy\n  shell(chmod +x bin/report)\n"
-        )
-        .as_bytes(),
+        format!("{config}\nallowed-server-side-scripts\n  bin/report\n").as_bytes(),
     );
     workspace.write(
         "bin/report",
         b"#!/bin/sh\nprintf '<%s>' \"$@\"\necho\necho \"warn from $DEPLOY_PROJECT_NAME\" >&2\nexit \"${EXIT:-0}\"\n",
     );
     workspace.write("bin/not-listed", b"#!/bin/sh\necho should-not-run\n");
+    // No after-deploy chmod: the bit travels with the deploy.
+    workspace.set_executable("bin/report", true);
+    workspace.set_executable("bin/not-listed", true);
 
     create_project(&server.client(ADMIN_KEY), "basic-app", RESOURCE);
     workspace.deploy(CI_KEY).expect_ok("deploy run");
@@ -403,13 +401,10 @@ fn run_on_server_exits_with_the_scripts_status() {
     let config = read_file(&workspace.config());
     workspace.write(
         "deploy.qc",
-        format!(
-            "{config}\nallowed-server-side-scripts bin/fail\n\
-             after-deploy\n  shell(chmod +x bin/fail)\n"
-        )
-        .as_bytes(),
+        format!("{config}\nallowed-server-side-scripts bin/fail\n").as_bytes(),
     );
     workspace.write("bin/fail", b"#!/bin/sh\necho failing >&2\nexit 7\n");
+    workspace.set_executable("bin/fail", true);
 
     create_project(&server.client(ADMIN_KEY), "basic-app", RESOURCE);
     workspace.deploy(CI_KEY).expect_ok("deploy run");
@@ -419,4 +414,36 @@ fn run_on_server_exits_with_the_scripts_status() {
         .expect_failure("failing script");
     assert_eq!(run.code, Some(7), "{}", run.output());
     assert_eq!(run.stderr, "failing\n");
+}
+
+/// The execute bit is part of what a deploy ships: it lands with the file, and
+/// a redeploy that changes only the bit — same content, so nothing is
+/// uploaded — still changes it on the server.
+#[test]
+fn deploy_run_carries_the_execute_bit_including_a_mode_only_change() {
+    use std::os::unix::fs::PermissionsExt;
+    let mode =
+        |path: &std::path::Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+
+    let root = TempRoot::new("cli-exec-bit");
+    let (_stub, server) = start(&root);
+    let workspace = CliWorkspace::new(&root, "basic-app", &server.url());
+    workspace.write("bin/tool", b"#!/bin/sh\necho tool\n");
+    workspace.set_executable("bin/tool", true);
+
+    create_project(&server.client(ADMIN_KEY), "basic-app", RESOURCE);
+    workspace.deploy(CI_KEY).expect_ok("first deploy");
+
+    let deployed = server.project_dir("basic-app");
+    assert_eq!(mode(&deployed.join("bin/tool")) & 0o111, 0o111);
+    assert_eq!(mode(&deployed.join("index.js")) & 0o111, 0);
+
+    workspace.set_executable("bin/tool", false);
+    let again = workspace.deploy(CI_KEY).expect_ok("mode-only redeploy");
+    assert!(
+        again.stdout.contains("Server has requested 0 files"),
+        "{}",
+        again.output()
+    );
+    assert_eq!(mode(&deployed.join("bin/tool")) & 0o111, 0);
 }
