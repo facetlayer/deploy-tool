@@ -180,6 +180,88 @@ pub fn parse_deploy_databases(config_text: &str) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
+// Server-side scripts
+// ---------------------------------------------------------------------------
+
+const ALLOWED_SERVER_SIDE_SCRIPTS: &str = "allowed-server-side-scripts";
+
+/// The executables `deploy run-on-server` may start, from every
+/// `allowed-server-side-scripts` block, normalized by [`normalize_script_path`].
+///
+/// The server reads this from the config recorded with the *active*
+/// deployment, never from the request, so adding an entry takes a deploy.
+///
+/// An invalid entry fails the whole list rather than being skipped: a silently
+/// dropped entry looks like a typo'd allowlist, and a skipped `..` entry would
+/// hide that someone tried. Note the qc parser ends a block at a line starting
+/// with `/`, so an absolute path never reaches this function — it shows up as
+/// "not allowed" at run time instead.
+pub fn parse_allowed_server_side_scripts(config_text: &str) -> Result<Vec<String>> {
+    let queries = qc::parse_file(config_text);
+    let mut out: Vec<String> = Vec::new();
+
+    for query in &queries {
+        if query.command != ALLOWED_SERVER_SIDE_SCRIPTS {
+            continue;
+        }
+        for tag in &query.tags {
+            let raw = tag.to_original_string();
+            let normalized = normalize_script_path(&raw)
+                .map_err(|err| anyhow!("Invalid entry in {ALLOWED_SERVER_SIDE_SCRIPTS}: {err}"))?;
+            if !out.contains(&normalized) {
+                out.push(normalized);
+            }
+        }
+    }
+
+    Ok(out)
+}
+
+/// Canonical form of a script path, used for both the allowlist entries and
+/// the path a caller asks to run, so `./bin/migrate` and `bin/migrate` match.
+///
+/// Relative, inside the deployment, and nothing a shell or the filesystem
+/// would read as anything else: no `..` segment anywhere (even one that would
+/// fold back inside), no absolute or home-relative path, no backslash, and no
+/// control characters. The server still resolves the result against the
+/// deployment directory and checks containment after following symlinks; this
+/// is the lexical half.
+pub fn normalize_script_path(raw: &str) -> Result<String> {
+    if raw.is_empty() {
+        return Err(anyhow!("script path is empty"));
+    }
+    if raw.chars().any(|c| c.is_control()) {
+        return Err(anyhow!("script path {raw:?} contains a control character"));
+    }
+    if raw.contains('\\') {
+        return Err(anyhow!("script path {raw:?} contains a backslash"));
+    }
+    if raw.starts_with('/') || raw.starts_with('~') {
+        return Err(anyhow!(
+            "script path {raw:?} must be relative to the deployment directory"
+        ));
+    }
+
+    let mut segments: Vec<&str> = Vec::new();
+    for segment in raw.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                return Err(anyhow!(
+                    "script path {raw:?} must not contain a '..' segment"
+                ))
+            }
+            other => segments.push(other),
+        }
+    }
+
+    if segments.is_empty() {
+        return Err(anyhow!("script path {raw:?} does not name a file"));
+    }
+    Ok(segments.join("/"))
+}
+
+// ---------------------------------------------------------------------------
 // Preserved files
 // ---------------------------------------------------------------------------
 
@@ -567,6 +649,90 @@ preserve-existing-files-max-age 7d
         let dbs = parse_deploy_database_configs("database backend/data/app.db\n");
         assert_eq!(dbs.len(), 1);
         assert!(!dbs[0].agent_sql_access_blocked);
+    }
+
+    #[test]
+    fn allowed_scripts_accumulate_across_blocks_and_normalize() {
+        let text = r#"allowed-server-side-scripts
+  bin/migrate
+  ./scripts/report.sh
+  tools//my-tool_v2
+
+allowed-server-side-scripts bin/migrate bin/other
+"#;
+        assert_eq!(
+            parse_allowed_server_side_scripts(text).unwrap(),
+            vec![
+                "bin/migrate",
+                "scripts/report.sh",
+                "tools/my-tool_v2",
+                "bin/other"
+            ]
+        );
+    }
+
+    #[test]
+    fn no_allowed_scripts_block_means_an_empty_list() {
+        assert!(parse_allowed_server_side_scripts(SAMPLE)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn a_parent_directory_entry_fails_the_whole_list() {
+        let text = "allowed-server-side-scripts\n  bin/ok\n  ../etc/passwd\n";
+        let err = parse_allowed_server_side_scripts(text)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("'..'"), "{err}");
+    }
+
+    /// The qc parser ends the block at a line beginning with `/`, so an
+    /// absolute entry never becomes an allowlist entry at all.
+    #[test]
+    fn an_absolute_entry_does_not_reach_the_allowlist() {
+        let text = "allowed-server-side-scripts\n  bin/ok\n  /usr/bin/env\n";
+        assert_eq!(
+            parse_allowed_server_side_scripts(text).unwrap(),
+            vec!["bin/ok"]
+        );
+    }
+
+    #[test]
+    fn script_paths_normalize_dot_and_empty_segments() {
+        assert_eq!(normalize_script_path("bin/migrate").unwrap(), "bin/migrate");
+        assert_eq!(
+            normalize_script_path("./bin/migrate").unwrap(),
+            "bin/migrate"
+        );
+        assert_eq!(
+            normalize_script_path("bin//./migrate").unwrap(),
+            "bin/migrate"
+        );
+        assert_eq!(normalize_script_path("migrate").unwrap(), "migrate");
+    }
+
+    #[test]
+    fn script_paths_that_could_leave_the_deployment_are_rejected() {
+        for bad in [
+            "",
+            ".",
+            "./",
+            "..",
+            "../x",
+            "bin/../x",
+            "bin/../../x",
+            "bin/..",
+            "/usr/bin/env",
+            "//etc/passwd",
+            "~/bin/x",
+            "~root/x",
+            "bin\\..\\x",
+            "bin/x\0",
+            "bin/x\n",
+        ] {
+            assert!(normalize_script_path(bad).is_err(), "{bad:?} was accepted");
+        }
     }
 
     #[test]

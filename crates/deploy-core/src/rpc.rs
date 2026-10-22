@@ -262,6 +262,81 @@ pub struct ListDatabasesResult {
 }
 
 // ---------------------------------------------------------------------------
+// runOnServer (new in this version)
+// ---------------------------------------------------------------------------
+//
+// New, so plain camelCase with no old peer to match. An old server answers it
+// with method-not-found.
+
+/// Most arguments a `runOnServer` call may pass. Generous for a command line,
+/// and small enough that an argv cannot be used to push the server around.
+pub const RUN_ON_SERVER_MAX_ARGS: usize = 256;
+/// Total bytes across all arguments.
+pub const RUN_ON_SERVER_MAX_ARG_BYTES: usize = 64 * 1024;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunOnServerParams {
+    pub project_name: String,
+    /// Path relative to the active deployment's directory. It must be listed in
+    /// that deployment's `allowed-server-side-scripts`; the server normalizes
+    /// it with `config::normalize_script_path` before comparing.
+    pub script: String,
+    /// Passed to the process as argv, one element per argument. There is no
+    /// shell anywhere on the path, so nothing in here is ever interpreted.
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
+impl RunOnServerParams {
+    /// The argument limits, checked by the CLI before sending and by the
+    /// server before running. A NUL cannot be represented in an argv at all.
+    pub fn validate_args(&self) -> anyhow::Result<()> {
+        if self.args.len() > RUN_ON_SERVER_MAX_ARGS {
+            anyhow::bail!(
+                "too many arguments: {} (at most {RUN_ON_SERVER_MAX_ARGS})",
+                self.args.len()
+            );
+        }
+        let total: usize = self.args.iter().map(String::len).sum();
+        if total > RUN_ON_SERVER_MAX_ARG_BYTES {
+            anyhow::bail!(
+                "arguments are {total} bytes in total (at most {RUN_ON_SERVER_MAX_ARG_BYTES})"
+            );
+        }
+        if let Some(index) = self.args.iter().position(|arg| arg.contains('\0')) {
+            anyhow::bail!("argument {} contains a NUL byte", index + 1);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunOnServerResult {
+    /// The normalized script path that ran.
+    pub script: String,
+    /// The active deployment it ran in.
+    pub deploy_name: String,
+    /// `None` when the process did not exit normally (killed, or timed out).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    /// The signal that ended the process, when one did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signal: Option<i32>,
+    #[serde(default)]
+    pub timed_out: bool,
+    /// Decoded as UTF-8, with invalid sequences replaced.
+    pub stdout: String,
+    pub stderr: String,
+    /// The server keeps only the first part of a very large output.
+    #[serde(default)]
+    pub stdout_truncated: bool,
+    #[serde(default)]
+    pub stderr_truncated: bool,
+}
+
+// ---------------------------------------------------------------------------
 // Deployment history
 // ---------------------------------------------------------------------------
 
@@ -446,6 +521,8 @@ pub mod methods {
     /// New in this version, for the dashboard. No old server answers either.
     pub const LIST_PROJECTS: &str = "listProjects";
     pub const GET_PROJECT: &str = "getProject";
+    /// New in this version; no old server answers it.
+    pub const RUN_ON_SERVER: &str = "runOnServer";
 }
 
 // ---------------------------------------------------------------------------
@@ -475,6 +552,15 @@ pub enum Action {
     /// It reads and nothing else. Holding it grants no deploy, no rollback and
     /// no SQL, on this or any project.
     AdminRead,
+    /// Run any of the project's `allowed-server-side-scripts`. One action for
+    /// every script on purpose: the per-script decision is the allowlist in the
+    /// deployed config, which only a `deploy` key can change, and a scope per
+    /// script would have to be re-minted every time that list changed.
+    ///
+    /// Separate from `deploy` for the same reason `execute-sql` is: a script is
+    /// arbitrary code with the server's privileges, so a key that ships builds
+    /// should not also be able to invoke them on demand.
+    RunOnServer,
 }
 
 impl Action {
@@ -489,6 +575,7 @@ impl Action {
             Action::Rollback => "rollback",
             Action::CreateProject => "create-project",
             Action::AdminRead => "admin-read",
+            Action::RunOnServer => "run-on-server",
         }
     }
 }
@@ -641,6 +728,12 @@ pub const METHOD_TABLE: &[MethodSpec] = &[
         Action::Rollback,
         ProjectResolution::ByProjectName,
     ),
+    // run-on-server: one scope for every script in the project's allowlist.
+    spec(
+        methods::RUN_ON_SERVER,
+        Action::RunOnServer,
+        ProjectResolution::ByProjectName,
+    ),
     // create-project
     spec(
         methods::CREATE_PROJECT,
@@ -705,6 +798,7 @@ mod tests {
             methods::CREATE_PROJECT,
             methods::LIST_PROJECTS,
             methods::GET_PROJECT,
+            methods::RUN_ON_SERVER,
         ];
         for name in names {
             assert!(
@@ -754,6 +848,11 @@ mod tests {
             lookup_method(methods::ROLLBACK).unwrap().action,
             Action::Rollback
         );
+        // Nor run server-side scripts; and that is gated per project, not
+        // per instance.
+        let run = lookup_method(methods::RUN_ON_SERVER).unwrap();
+        assert_eq!(run.action, Action::RunOnServer);
+        assert_eq!(run.resolution, ProjectResolution::ByProjectName);
         // The dashboard reads the whole instance, so it is checked against the
         // instance and not against any one project's binding.
         for name in [methods::LIST_PROJECTS, methods::GET_PROJECT] {
@@ -772,6 +871,7 @@ mod tests {
             methods::EXECUTE_SQL,
             methods::ROLLBACK,
             methods::CREATE_PROJECT,
+            methods::RUN_ON_SERVER,
         ] {
             assert_ne!(
                 lookup_method(name).unwrap().action,
@@ -831,6 +931,52 @@ mod tests {
             scope_string("do2-deploy", Action::CreateProject),
             "do2-deploy:create-project"
         );
+        assert_eq!(
+            scope_string("hotlaps-api-staging", Action::RunOnServer),
+            "hotlaps-api-staging:run-on-server"
+        );
+    }
+
+    #[test]
+    fn run_on_server_params_are_camel_case_and_args_default_to_empty() {
+        let params: RunOnServerParams =
+            serde_json::from_str(r#"{"projectName":"p","script":"bin/x"}"#).unwrap();
+        assert!(params.args.is_empty());
+
+        let json = serde_json::to_value(RunOnServerResult {
+            script: "bin/x".to_string(),
+            deploy_name: "p-3".to_string(),
+            exit_code: Some(2),
+            stdout_truncated: true,
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(json["deployName"], "p-3");
+        assert_eq!(json["exitCode"], 2);
+        assert_eq!(json["stdoutTruncated"], true);
+        assert!(json.get("signal").is_none());
+    }
+
+    #[test]
+    fn run_on_server_argument_limits() {
+        let with_args = |args: Vec<String>| RunOnServerParams {
+            project_name: "p".to_string(),
+            script: "bin/x".to_string(),
+            args,
+        };
+        // Shell metacharacters are fine: they are argv, never shell text.
+        assert!(
+            with_args(vec!["; rm -rf /".into(), "$(id)".into(), "`x`".into()])
+                .validate_args()
+                .is_ok()
+        );
+        assert!(with_args(vec!["a\0b".into()]).validate_args().is_err());
+        assert!(with_args(vec!["a".into(); RUN_ON_SERVER_MAX_ARGS + 1])
+            .validate_args()
+            .is_err());
+        assert!(with_args(vec!["a".repeat(RUN_ON_SERVER_MAX_ARG_BYTES + 1)])
+            .validate_args()
+            .is_err());
     }
 
     /// auth-center's `validate_scope` requires exactly two segments, the action

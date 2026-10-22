@@ -16,6 +16,7 @@ chrono.workspace = true
 clap.workspace = true
 globset.workspace = true
 hex.workspace = true
+libc = "0.2"
 rand.workspace = true
 rusqlite.workspace = true
 rust-embed.workspace = true

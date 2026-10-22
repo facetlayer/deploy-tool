@@ -387,6 +387,7 @@ dependencies = [
  "deploy-core",
  "globset",
  "hex",
+ "libc",
  "rand",
  "rusqlite",
  "rust-embed",

@@ -111,6 +111,23 @@ create table if not exists project_resource_binding_history(
   changed_by_key_id text,
   changed_by_key_name text
 );
+
+-- Every `runOnServer` call, written before the process starts and completed
+-- when it ends, so a run that takes the server down with it is still on record.
+create table if not exists server_script_run(
+  run_id integer primary key autoincrement,
+  project_name text not null,
+  deploy_name text not null,
+  script text not null,
+  args_json text not null,
+  started_at datetime not null,
+  finished_at datetime,
+  exit_code integer,
+  signal integer,
+  timed_out integer,
+  authorized_by_key_id text,
+  authorized_by_key_name text
+);
 "#;
 
 /// Where the state directory lives. Matches the old tool's resolution order so

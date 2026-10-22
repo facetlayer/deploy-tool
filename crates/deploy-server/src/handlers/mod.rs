@@ -9,6 +9,7 @@ pub mod cleanup;
 pub mod deployments;
 pub mod files;
 pub mod projects;
+pub mod run_on_server;
 pub mod sql_methods;
 pub mod tags;
 pub mod uploads;
@@ -69,6 +70,8 @@ pub fn dispatch(
 
         methods::EXECUTE_SQL => sql_methods::execute_sql(state, params),
         methods::LIST_DATABASES => sql_methods::list_databases(state, params),
+
+        methods::RUN_ON_SERVER => run_on_server::run_on_server(state, params, authorized_by),
 
         methods::GET_DEPLOYMENT_TAGS => tags::get_deployment_tags(state, params),
 
@@ -1257,6 +1260,228 @@ mod tests {
         assert_eq!(databases.len(), 2);
         assert_eq!(databases[0]["path"], "data/blocked.sqlite");
         assert_eq!(databases[0]["tables"], json!(["secrets"]));
+    }
+
+    // --- runOnServer ---
+
+    const SCRIPT_PROJECT: &str = "script-project";
+
+    fn write_executable(path: &Path, contents: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        write(path, contents);
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// Deploys and activates a project whose config allows `bin/echo-args`,
+    /// `bin/fail`, `bin/env` and `bin/not-executable`, plus `extra`.
+    fn setup_scripts(name: &str, extra: &str) -> TestServer {
+        let server = setup(name);
+        let dir = server.deploy_dir(SCRIPT_PROJECT);
+        write_executable(
+            &dir.join("bin/echo-args"),
+            "#!/bin/sh\nfor a in \"$@\"; do printf '[%s]\\n' \"$a\"; done\necho to-stderr >&2\n",
+        );
+        write_executable(&dir.join("bin/fail"), "#!/bin/sh\necho nope >&2\nexit 3\n");
+        write_executable(&dir.join("bin/env"), "#!/bin/sh\nexec /usr/bin/env\n");
+        write_executable(&dir.join("bin/unlisted"), "#!/bin/sh\necho ran\n");
+        write(&dir.join("bin/not-executable"), "#!/bin/sh\necho ran\n");
+
+        let config = config_for(
+            SCRIPT_PROJECT,
+            &format!(
+                "allowed-server-side-scripts\n  bin/echo-args\n  ./bin/fail\n  bin/env\n  \
+                 bin/not-executable\n{extra}\n"
+            ),
+        );
+        let deploy_name = server.create_deployment(SCRIPT_PROJECT, json!([]), &config);
+        server.activate(&deploy_name);
+        server
+    }
+
+    fn run_script(server: &TestServer, script: &str, args: Json) -> Result<Json> {
+        server.call(
+            methods::RUN_ON_SERVER,
+            json!({ "projectName": SCRIPT_PROJECT, "script": script, "args": args }),
+        )
+    }
+
+    #[test]
+    fn an_allowed_script_runs_with_its_arguments_as_argv_not_shell() {
+        let server = setup_scripts("run-argv", "");
+        let marker = server.deploy_dir(SCRIPT_PROJECT).join("pwned");
+        let injection = format!("; touch {}", marker.display());
+
+        let result = run_script(
+            &server,
+            "bin/echo-args",
+            json!(["two words", "$(id)", "`id`", injection, "--flag=*"]),
+        )
+        .unwrap();
+
+        assert_eq!(result["exitCode"], 0);
+        assert_eq!(
+            result["stdout"],
+            format!("[two words]\n[$(id)]\n[`id`]\n[{injection}]\n[--flag=*]\n")
+        );
+        assert_eq!(result["stderr"], "to-stderr\n");
+        assert_eq!(result["script"], "bin/echo-args");
+        assert!(!marker.exists(), "an argument was interpreted by a shell");
+    }
+
+    #[test]
+    fn a_failing_script_is_a_result_not_an_error() {
+        let server = setup_scripts("run-fail", "");
+        // `./bin/fail` in the config and `bin/fail` here are the same entry.
+        let result = run_script(&server, "bin/fail", json!([])).unwrap();
+        assert_eq!(result["exitCode"], 3);
+        assert_eq!(result["stderr"], "nope\n");
+        assert_eq!(result["timedOut"], false);
+    }
+
+    #[test]
+    fn every_run_is_recorded_with_the_key_that_asked() {
+        let server = setup_scripts("run-audit", "");
+        run_script(&server, "bin/fail", json!(["x"])).unwrap();
+
+        let conn = server.state.db();
+        let row: (String, String, Option<i32>, Option<String>, Option<String>) = conn
+            .query_row(
+                "select script, args_json, exit_code, authorized_by_key_id, finished_at
+                 from server_script_run",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(row.0, "bin/fail");
+        assert_eq!(row.1, r#"["x"]"#);
+        assert_eq!(row.2, Some(3));
+        assert_eq!(row.3.as_deref(), Some("key-abc"));
+        assert!(row.4.is_some());
+    }
+
+    #[test]
+    fn a_script_that_is_not_listed_is_refused_even_though_it_exists() {
+        let server = setup_scripts("run-unlisted", "");
+        let err = run_script(&server, "bin/unlisted", json!([]))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("not listed in allowed-server-side-scripts"),
+            "{err}"
+        );
+        let runs: i64 = server
+            .state
+            .db()
+            .query_row("select count(*) from server_script_run", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(runs, 0, "a refused run must not start a process");
+    }
+
+    #[test]
+    fn paths_outside_the_deployment_are_refused_before_the_allowlist() {
+        let server = setup_scripts("run-traversal", "");
+        for script in [
+            "../script-project/bin/echo-args",
+            "bin/../bin/echo-args",
+            "/bin/sh",
+            "~/bin/sh",
+            "",
+        ] {
+            assert!(
+                run_script(&server, script, json!([])).is_err(),
+                "{script:?} was run"
+            );
+        }
+    }
+
+    #[test]
+    fn a_listed_symlink_that_leaves_the_deployment_is_refused() {
+        let server = setup_scripts("run-symlink", "allowed-server-side-scripts bin/shell\n");
+        std::os::unix::fs::symlink(
+            "/bin/sh",
+            server.deploy_dir(SCRIPT_PROJECT).join("bin/shell"),
+        )
+        .unwrap();
+        let err = run_script(&server, "bin/shell", json!(["-c", "echo hi"]))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("outside the deployment directory"), "{err}");
+    }
+
+    #[test]
+    fn a_listed_file_without_the_execute_bit_is_refused_with_the_fix() {
+        let server = setup_scripts("run-noexec", "");
+        let err = run_script(&server, "bin/not-executable", json!([]))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("chmod +x bin/not-executable"), "{err}");
+    }
+
+    /// The server's environment carries DEPLOY_AUTH_KEY; none of it may reach
+    /// the script beyond the passthrough list.
+    #[test]
+    fn the_script_sees_a_scrubbed_environment() {
+        let server = setup_scripts("run-env", "");
+        let result = run_script(&server, "bin/env", json!([])).unwrap();
+        let stdout = result["stdout"].as_str().unwrap();
+
+        let allowed = [
+            "PATH",
+            "HOME",
+            "USER",
+            "LOGNAME",
+            "LANG",
+            "LC_ALL",
+            "TZ",
+            "DEPLOY_PROJECT_NAME",
+            "DEPLOY_NAME",
+            // Added by /bin/sh itself.
+            "PWD",
+            "OLDPWD",
+            "SHLVL",
+            "_",
+        ];
+        for line in stdout.lines() {
+            let name = line.split('=').next().unwrap();
+            assert!(allowed.contains(&name), "{name} leaked into the script");
+        }
+        assert!(stdout.contains(&format!("DEPLOY_PROJECT_NAME={SCRIPT_PROJECT}\n")));
+    }
+
+    /// A deploy that has not been activated cannot widen the allowlist.
+    #[test]
+    fn the_allowlist_comes_from_the_active_deployment_only() {
+        let server = setup_scripts("run-active-only", "");
+        let widened = config_for(
+            SCRIPT_PROJECT,
+            "allowed-server-side-scripts bin/echo-args bin/unlisted\n",
+        );
+        server.create_deployment(SCRIPT_PROJECT, json!([]), &widened);
+
+        let err = run_script(&server, "bin/unlisted", json!([]))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("not listed"), "{err}");
+    }
+
+    #[test]
+    fn a_project_with_no_active_deployment_cannot_run_anything() {
+        let server = setup("run-no-active");
+        server.register(SCRIPT_PROJECT);
+        let err = run_script(&server, "bin/echo-args", json!([]))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("No active deployment"), "{err}");
     }
 
     // --- dispatch ---

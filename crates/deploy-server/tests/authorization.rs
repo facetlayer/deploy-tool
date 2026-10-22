@@ -315,6 +315,35 @@ fn a_deploy_key_cannot_run_sql_because_the_action_is_separately_grantable() {
     );
 }
 
+/// Running a server-side script is its own grant: a key that ships builds
+/// cannot invoke them, and the scope asked is the single per-project
+/// `run-on-server` one whatever the script.
+#[test]
+fn a_deploy_key_cannot_run_server_side_scripts() {
+    let root = TempRoot::new("authz-run-on-server");
+    let (stub, server) = start(&root, granting(standard_grants()));
+    server.client(ADMIN_KEY).ok(
+        "createProject",
+        json!({ "projectName": "hotlaps-api", "resourceName": RESOURCE }),
+    );
+
+    stub.clear();
+    let ci = server.client(CI_KEY);
+    for script in ["bin/migrate", "bin/report"] {
+        ci.denied(
+            "runOnServer",
+            json!({ "projectName": "hotlaps-api", "script": script, "args": [] }),
+        );
+    }
+    assert_eq!(
+        stub.scopes_asked(),
+        vec![
+            "hotlaps-staging:run-on-server".to_string(),
+            "hotlaps-staging:run-on-server".to_string(),
+        ]
+    );
+}
+
 #[test]
 fn create_project_is_checked_against_the_instance_administration_resource() {
     let root = TempRoot::new("authz-admin");
