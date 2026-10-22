@@ -18,6 +18,8 @@ use std::process::Command;
 
 pub struct CliRun {
     pub success: bool,
+    /// `None` when the CLI was killed by a signal.
+    pub code: Option<i32>,
     pub stdout: String,
     pub stderr: String,
 }
@@ -93,6 +95,7 @@ impl CliWorkspace {
 
         CliRun {
             success: output.status.success(),
+            code: output.status.code(),
             stdout: String::from_utf8_lossy(&output.stdout).to_string(),
             stderr: String::from_utf8_lossy(&output.stderr).to_string(),
         }

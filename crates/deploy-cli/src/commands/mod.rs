@@ -6,5 +6,6 @@ pub mod history;
 pub mod preview;
 pub mod rollback;
 pub mod run;
+pub mod run_on_server;
 pub mod sql;
 pub mod start_services;

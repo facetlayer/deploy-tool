@@ -124,6 +124,7 @@ pub fn print_auth_setup_commands(resource_name: &str, scopes: &[ActionScope]) {
         let why = match entry.action {
             Action::ExecuteSql => "arbitrary SQL against the project's database",
             Action::Rollback => "repointing the live deployment, without shipping new code",
+            Action::RunOnServer => "running any of the project's allowed-server-side-scripts",
             _ => "",
         };
         println!("  {:<44}  {why}", entry.scope);
@@ -183,6 +184,7 @@ mod tests {
             "execute-sql must be granted deliberately, not bundled"
         );
         assert!(!bundled.contains(&Action::Rollback));
+        assert!(!bundled.contains(&Action::RunOnServer));
     }
 
     #[test]
@@ -196,6 +198,7 @@ mod tests {
                 "hotlaps-api-staging:read",
                 "hotlaps-api-staging:execute-sql",
                 "hotlaps-api-staging:rollback",
+                "hotlaps-api-staging:run-on-server",
             ]
         );
         for entry in &scopes {

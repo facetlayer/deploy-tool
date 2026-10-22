@@ -14,7 +14,23 @@ additions must be optional so old peers can ignore them.
 type FileEntry = { relPath: string; sha: string };
 type DeploymentTags = Record<string, string>;
 type Preview = { filesToUpload: FileEntry[]; filesToDelete: string[] };
+type RunOnServerResult = {
+  script: string;        // normalized path that ran
+  deployName: string;    // the active deployment it ran in
+  exitCode?: number;     // absent when killed
+  signal?: number;
+  timedOut: boolean;
+  stdout: string;        // UTF-8, invalid sequences replaced
+  stderr: string;
+  stdoutTruncated: boolean;
+  stderrTruncated: boolean;
+};
 ```
+
+`runOnServer` reports a script's non-zero exit in its result, not as a
+JSON-RPC error. An error means the script did not start: not allowlisted, not
+executable, outside the deployment, or too many runs in flight. `args` is at
+most 256 entries and 64 KiB in total.
 
 ## Methods
 
@@ -40,10 +56,12 @@ type Preview = { filesToUpload: FileEntry[]; filesToDelete: string[] };
 | `downloadFile` | `{ projectName, relPath }` | `{ contentBase64, relPath }` | `read` |
 | `listDatabases` | `{ projectName }` | Configured databases and tables | `read` |
 | `executeSql` | `{ projectName, sql, database?, callerIsAgent? }` | Columns, rows, and affected count | `execute-sql` |
+| `runOnServer` | `{ projectName, script, args? }` | `RunOnServerResult` | `run-on-server` |
 
-`createProject` is the only method without an equivalent in the previous
-server, and the only one the `deploy` CLI never calls — projects are registered
-with `auth-setup`. `getNeededFiles` returns a bare array. `verifyDeployment` reports hash
+`createProject` and `runOnServer` have no equivalent in the previous server,
+which answers them with method-not-found. `createProject` is also the only
+method the `deploy` CLI never calls — projects are registered with
+`auth-setup`. `getNeededFiles` returns a bare array. `verifyDeployment` reports hash
 failure in its result rather than as a JSON-RPC error.
 
 All client-supplied relative paths are checked to remain inside their

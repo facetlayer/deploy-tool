@@ -81,10 +81,10 @@ the old Rust/TS server, for as long as both exist. So:
   added.
 - The endpoint (`POST /json-rpc`), the `x-api-key` header, the JSON-RPC error
   codes and the 50MB body limit all match the old server.
-- `createProject` is the one method no old server answers. That is fine: it is
-  new, and a client calling it against an old server gets a method-not-found.
-  This CLI never calls it — projects are registered with `auth-setup` — but the
-  server still serves it.
+- `createProject` and `runOnServer` are methods no old server answers. That is
+  fine: they are new, and a client calling one against an old server gets a
+  method-not-found. This CLI never calls `createProject` — projects are
+  registered with `auth-setup` — but the server still serves it.
 
 `db.rs` is the opposite case. Compatibility with the old tool's database is
 explicitly not a requirement (R6), so the schema is a single `create table if
@@ -97,9 +97,9 @@ plain `insert into … select`.
 
 ## Tests
 
-291 tests as of 2026-08-31: 100 in `deploy-core`, 85 + 22 + 12 + 10 in
+321 tests as of 2026-10-21: 108 in `deploy-core`, 98 + 23 + 12 + 10 in
 `deploy-server` (unit, `tests/authorization.rs`, `tests/deployment_flow.rs`,
-`tests/dashboard.rs`), 52 + 10 in `deploy-cli` (unit,
+`tests/dashboard.rs`), 58 + 12 in `deploy-cli` (unit,
 `tests/cli_end_to_end.rs`).
 
 ```bash
@@ -159,6 +159,11 @@ rather than just the return values. Follow that pattern for new handlers.
   convention is `127.0.0.1`; there is no bind flag yet. The dashboard does not
   change this — it is reached through nginx like everything else, and direct
   access to the port is still the firewall's problem.
+- No shell on the `run-on-server` path, and no option that adds one.
+  `handlers/run_on_server.rs` executes the allowlisted file directly with the
+  caller's arguments as argv, in a scrubbed environment (the server's holds
+  `DEPLOY_AUTH_KEY`). The allowlist is read from the *active* deployment's
+  config, never from the request. A script that wants a shell has to be one.
 - No dashboard route that writes. The dashboard is `admin-read` and nothing
   else, deliberately: this server deploys auth-center and the dashboard signs
   in through auth-center, so the circular dependency is only tolerable while

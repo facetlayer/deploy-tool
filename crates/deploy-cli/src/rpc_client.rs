@@ -216,6 +216,10 @@ impl RpcClient {
         self.call(methods::LIST_DATABASES, params)
     }
 
+    pub fn run_on_server(&self, params: &RunOnServerParams) -> Result<RunOnServerResult> {
+        self.call(methods::RUN_ON_SERVER, params)
+    }
+
     pub fn list_deployments(
         &self,
         params: &ListDeploymentsParams,

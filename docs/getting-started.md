@@ -113,3 +113,31 @@ deploy sql my-app.qc 'select id, name from users' --json
 Use `--database <path>` when table-based routing is ambiguous. SQL writes
 commit immediately. `agent-sql-access-blocked` is a client-detection
 guardrail, not a security boundary.
+
+## Server-side scripts
+
+Declare the executables a caller may run on the server, and make them
+executable after each deploy:
+
+```text
+allowed-server-side-scripts
+  bin/migrate
+
+after-deploy
+  shell(chmod +x bin/migrate)
+```
+
+Then run one in the active deployment:
+
+```bash
+deploy run-on-server my-app.qc bin/migrate --dry-run
+deploy run-on-server my-app.qc bin/migrate -- --help
+```
+
+Everything after the script path is passed to it as-is, with no shell; put
+`deploy`'s own options such as `--override-dest` before the config file, and
+use `--` if the script's first argument is `--help`. The script's stdout and
+stderr are printed on the matching streams and `deploy` exits with its status
+(124 if the server's 300-second limit killed it). The key needs
+`<resource>:run-on-server`; see the config reference for what a script can and
+cannot see.

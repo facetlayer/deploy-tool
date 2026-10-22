@@ -309,3 +309,114 @@ fn deploy_run_with_no_api_key_is_refused() {
         run.output()
     );
 }
+
+/// `deploy run-on-server` against a live server: the script's output comes
+/// back on the right streams, its exit code becomes the CLI's, and its
+/// arguments arrive as argv rather than shell text.
+#[test]
+fn run_on_server_runs_an_allowed_script_and_relays_its_output() {
+    let root = TempRoot::new("cli-run-on-server");
+    let (stub, server) = start(&root);
+    let workspace = CliWorkspace::new(&root, "basic-app", &server.url());
+
+    let config = read_file(&workspace.config());
+    workspace.write(
+        "deploy.qc",
+        format!(
+            "{config}\nallowed-server-side-scripts\n  bin/report\n\n\
+             # Uploaded files carry no permission bits.\n\
+             after-deploy\n  shell(chmod +x bin/report)\n"
+        )
+        .as_bytes(),
+    );
+    workspace.write(
+        "bin/report",
+        b"#!/bin/sh\nprintf '<%s>' \"$@\"\necho\necho \"warn from $DEPLOY_PROJECT_NAME\" >&2\nexit \"${EXIT:-0}\"\n",
+    );
+    workspace.write("bin/not-listed", b"#!/bin/sh\necho should-not-run\n");
+
+    create_project(&server.client(ADMIN_KEY), "basic-app", RESOURCE);
+    workspace.deploy(CI_KEY).expect_ok("deploy run");
+
+    let marker = server.project_dir("basic-app").join("pwned");
+    let injection = format!("$(touch {})", path_str(&marker));
+    let run = workspace
+        .run(
+            CI_KEY,
+            &[
+                "run-on-server",
+                "deploy.qc",
+                "./bin/report",
+                "--flag",
+                "two words",
+                &injection,
+            ],
+        )
+        .expect_ok("run-on-server");
+    assert_eq!(
+        run.stdout,
+        format!("<--flag><two words><{injection}>\n"),
+        "{}",
+        run.output()
+    );
+    assert_eq!(run.stderr, "warn from basic-app\n");
+    assert!(!marker.exists(), "an argument reached a shell");
+    assert!(stub
+        .scopes_asked()
+        .contains(&"basic-staging:run-on-server".to_string()));
+
+    // Refused locally, before any request: not in the allowlist.
+    let refused = workspace
+        .run(CI_KEY, &["run-on-server", "deploy.qc", "bin/not-listed"])
+        .expect_failure("unlisted script");
+    assert!(
+        refused
+            .stderr
+            .contains("not listed in allowed-server-side-scripts"),
+        "{}",
+        refused.output()
+    );
+    assert!(!refused.stdout.contains("should-not-run"));
+
+    let escaped = workspace
+        .run(
+            CI_KEY,
+            &["run-on-server", "deploy.qc", "../basic-app/bin/report"],
+        )
+        .expect_failure("parent-directory script");
+    assert!(escaped.stderr.contains("'..'"), "{}", escaped.output());
+
+    // A key without run-on-server on this resource is denied by auth-center.
+    workspace
+        .run(OTHER_KEY, &["run-on-server", "deploy.qc", "bin/report"])
+        .expect_failure("key for another resource");
+}
+
+/// The script's exit status is the CLI's, so `deploy run-on-server` composes
+/// in a shell pipeline or a CI step.
+#[test]
+fn run_on_server_exits_with_the_scripts_status() {
+    let root = TempRoot::new("cli-run-on-server-exit");
+    let (_stub, server) = start(&root);
+    let workspace = CliWorkspace::new(&root, "basic-app", &server.url());
+
+    let config = read_file(&workspace.config());
+    workspace.write(
+        "deploy.qc",
+        format!(
+            "{config}\nallowed-server-side-scripts bin/fail\n\
+             after-deploy\n  shell(chmod +x bin/fail)\n"
+        )
+        .as_bytes(),
+    );
+    workspace.write("bin/fail", b"#!/bin/sh\necho failing >&2\nexit 7\n");
+
+    create_project(&server.client(ADMIN_KEY), "basic-app", RESOURCE);
+    workspace.deploy(CI_KEY).expect_ok("deploy run");
+
+    let run = workspace
+        .run(CI_KEY, &["run-on-server", "deploy.qc", "bin/fail"])
+        .expect_failure("failing script");
+    assert_eq!(run.code, Some(7), "{}", run.output());
+    assert_eq!(run.stderr, "failing\n");
+}

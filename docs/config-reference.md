@@ -114,6 +114,48 @@ available to `deploy list-databases` and `deploy sql`.
 running in a coding agent. Explicit `--database` selections must name a
 configured database and remain inside the deployment directory.
 
+## Server-side scripts
+
+```text
+allowed-server-side-scripts
+  bin/migrate
+  scripts/report.sh
+
+after-deploy
+  shell(chmod +x bin/migrate scripts/report.sh)
+```
+
+Each entry is an executable, relative to the deployment directory, that
+`deploy run-on-server` may start. The block can be repeated; entries
+accumulate. Paths are normalized (`./bin/migrate` and `bin/migrate` are the
+same entry) and must stay inside the deployment: an entry containing a `..`
+segment, a backslash or a control character makes the whole list invalid,
+and `deploy run` refuses to ship it. Absolute paths cannot be listed.
+
+The server reads the list from the config recorded with the **active**
+deployment, so adding a script takes a deploy, and a deployed-but-inactive
+config cannot widen it. At run time the server also requires that the file
+exists, is a regular file with an execute bit, and still lies inside the
+deployment directory after symlinks are resolved. Uploaded files carry no
+permission bits, so set the execute bit in `after-deploy` as above.
+
+A script runs:
+
+- directly, with its arguments as argv. There is no shell, so arguments are
+  never expanded or interpreted; a script that wants a shell has to be one.
+- in the active deployment directory, with stdin closed.
+- with a scrubbed environment: only `PATH`, `HOME`, `USER`, `LOGNAME`,
+  `LANG`, `LC_ALL` and `TZ` pass through from the server, plus
+  `DEPLOY_PROJECT_NAME` and `DEPLOY_NAME`. The server's own secrets
+  (`DEPLOY_AUTH_KEY`, the dashboard OAuth secret) are not visible to it.
+- for at most 300 seconds, after which it and every process in its process
+  group is killed.
+- with stdout and stderr each capped at 4 MiB.
+
+At most four scripts run at once per server. Every run is recorded in the
+server's `server_script_run` table with its arguments, exit status and the
+key that started it, and logged to the journal.
+
 ## Dynamic routes
 
 ```text

@@ -10,7 +10,7 @@ runs configured post-deploy actions.
 | Crate | Purpose |
 |---|---|
 | `deploy-core` | Shared `.qc` parsing, file selection, hashing, RPC types, and authorization method table. |
-| `deploy-cli` | The `deploy` command. Builds manifests, uploads missing content, activates releases, and provides history, rollback, copy-back, and SQL commands. |
+| `deploy-cli` | The `deploy` command. Builds manifests, uploads missing content, activates releases, and provides history, rollback, copy-back, SQL, and server-side script commands. |
 | `deploy-server` | The JSON-RPC service. Stores deployment state in SQLite and files in a configured deployment directory. |
 
 Shared behavior belongs in `deploy-core`, so the client and server cannot
@@ -42,7 +42,8 @@ that instance's database. The same project can therefore use different
 resources in different environments.
 
 Scopes have the form `<resource>:<action>`. The supported actions are
-`deploy`, `read`, `execute-sql`, `rollback`, and `create-project`. The server
+`deploy`, `read`, `execute-sql`, `rollback`, `run-on-server`, and
+`create-project`. The server
 has no local API-key table and fails closed if auth-center cannot return an
 explicit positive decision.
 
@@ -63,8 +64,8 @@ and is not supported by the old server.
 
 - Preview every `update-in-place` deployment. Server-generated files require
   `ignore` or `ignore-destination` rules or they will be deleted.
-- Give CI only `deploy` and, when needed, `read`; grant SQL and rollback
-  separately.
+- Give CI only `deploy` and, when needed, `read`; grant SQL, rollback and
+  `run-on-server` separately.
 - Keep auth-center credentials in the server environment file and client keys
   in a secrets file or environment variable.
 - Use `--disable-api-key-check` only for local development.

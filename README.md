@@ -124,6 +124,7 @@ On the client, put the auth-center key in `~/secrets/deploy.env` as
 | `deploy copy-back <config.qc> <path>` | Copy a file from the server's active deployment back to the local tree. |
 | `deploy sql <config.qc> <query> [--database P] [--json]` | Run SQL against a database declared in the config. |
 | `deploy list-databases <config.qc>` | The databases registered for a project, with their tables. |
+| `deploy run-on-server <config.qc> <script> [args…]` | Run one of the config's `allowed-server-side-scripts` in the active deployment; prints its stdout/stderr and exits with its status. Needs `<resource>:run-on-server`. |
 | `deploy start-services` / `deploy preview-start-services` | Runs on a deploy host: `candle check-start` in every active deployment that declares a `candle-config`. Brings services back after a reboot. |
 
 Every command that talks to a server takes `--override-dest <url>` to override

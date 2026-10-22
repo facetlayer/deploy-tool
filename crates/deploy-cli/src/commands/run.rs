@@ -34,6 +34,12 @@ pub fn run(config_file: &Path, override_dest: Option<&str>) -> Result<()> {
     let mut timer = RunningTimer::new();
 
     let setup = setup_client(config_file, override_dest)?;
+
+    // The server reads this list at run-on-server time and refuses every
+    // script if it does not parse, so catch a bad entry before shipping it.
+    deploy_core::config::parse_allowed_server_side_scripts(&setup.config_text)
+        .with_context(|| format!("In {}", config_file.display()))?;
+
     println!("Project name: {}", setup.project_name);
     println!("Destination URL: {}", setup.dest_url);
 

@@ -77,6 +77,27 @@ enum Command {
         override_dest: Option<String>,
     },
 
+    /// Run one of the project's allowed-server-side-scripts in its active
+    /// deployment, and print its stdout and stderr
+    ///
+    /// Everything after the script path is passed to it unchanged, flags
+    /// included. Put deploy's own options before the config file, and use `--`
+    /// when the script's first argument is a flag deploy also has (`--help`).
+    RunOnServer {
+        config_file: PathBuf,
+
+        /// Script path relative to the deployment, as listed in
+        /// allowed-server-side-scripts
+        script: String,
+
+        /// Arguments for the script, passed as-is with no shell
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+
+        #[arg(long)]
+        override_dest: Option<String>,
+    },
+
     /// Roll back a project to a previous deployment
     Rollback {
         config_file: PathBuf,
@@ -207,6 +228,25 @@ fn run() -> Result<()> {
             override_dest,
         } => commands::sql::list_databases(&config_file, override_dest.as_deref()),
 
+        Command::RunOnServer {
+            config_file,
+            script,
+            args,
+            override_dest,
+        } => {
+            let status = commands::run_on_server::run_on_server(
+                &config_file,
+                &script,
+                &args,
+                override_dest.as_deref(),
+            )?;
+            // The script's own status, not just success/failure.
+            if status != 0 {
+                std::process::exit(i32::from(status));
+            }
+            Ok(())
+        }
+
         Command::Rollback {
             config_file,
             deploy_name,
@@ -304,6 +344,89 @@ mod tests {
                 assert_eq!(resource, "hotlaps-api-staging");
             }
             _ => panic!("expected auth-scopes"),
+        }
+    }
+
+    #[test]
+    fn run_on_server_passes_everything_after_the_script_through() {
+        let cli = Cli::parse_from([
+            "deploy",
+            "run-on-server",
+            "--override-dest",
+            "http://x",
+            "deploy.qc",
+            "bin/migrate",
+            "--dry-run",
+            "-v",
+            "--override-dest",
+            "not-ours",
+            "two words",
+        ]);
+        match cli.command {
+            Command::RunOnServer {
+                config_file,
+                script,
+                args,
+                override_dest,
+            } => {
+                assert_eq!(config_file.to_str(), Some("deploy.qc"));
+                assert_eq!(script, "bin/migrate");
+                assert_eq!(
+                    args,
+                    vec![
+                        "--dry-run",
+                        "-v",
+                        "--override-dest",
+                        "not-ours",
+                        "two words"
+                    ]
+                );
+                assert_eq!(override_dest.as_deref(), Some("http://x"));
+            }
+            _ => panic!("expected run-on-server"),
+        }
+    }
+
+    /// A flag deploy itself knows, as the first argument after the script, is
+    /// still deploy's; `--` hands it to the script instead.
+    #[test]
+    fn a_double_dash_hands_one_of_deploys_own_flags_to_the_script() {
+        assert!(
+            Cli::try_parse_from(["deploy", "run-on-server", "a.qc", "bin/x", "--help"]).is_err()
+        );
+        match Cli::parse_from([
+            "deploy",
+            "run-on-server",
+            "a.qc",
+            "bin/x",
+            "--",
+            "--override-dest",
+            "y",
+        ])
+        .command
+        {
+            Command::RunOnServer {
+                args,
+                override_dest,
+                ..
+            } => {
+                assert_eq!(args, vec!["--override-dest", "y"]);
+                assert_eq!(override_dest, None);
+            }
+            _ => panic!("expected run-on-server"),
+        }
+    }
+
+    #[test]
+    fn run_on_server_accepts_no_arguments_and_a_double_dash() {
+        match Cli::parse_from(["deploy", "run-on-server", "a.qc", "bin/x"]).command {
+            Command::RunOnServer { args, .. } => assert!(args.is_empty()),
+            _ => panic!("expected run-on-server"),
+        }
+        match Cli::parse_from(["deploy", "run-on-server", "a.qc", "bin/x", "--", "--help"]).command
+        {
+            Command::RunOnServer { args, .. } => assert_eq!(args, vec!["--help"]),
+            _ => panic!("expected run-on-server"),
         }
     }
 

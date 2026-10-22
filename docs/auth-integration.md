@@ -15,6 +15,7 @@ A deploy scope is exactly `<resource>:<action>`:
 | `rollback` | Reactivate an earlier versioned deployment. |
 | `create-project` | Register or rebind projects on an instance. |
 | `admin-read` | Read every project on the instance. Used by the web dashboard. |
+| `run-on-server` | Run any of the project's `allowed-server-side-scripts`. |
 
 The action is the final segment. Generate scopes with `deploy auth-scopes`
 instead of constructing them manually. A resource must not contain `:`.
@@ -57,7 +58,16 @@ scope set and ready-to-run `auth-setup` commands. It is local-only and needs no
 API key.
 
 The suggested deployer role contains `deploy` and `read`. Grant
-`execute-sql` and `rollback` separately. Instance administration keys should
+`execute-sql`, `rollback` and `run-on-server` separately.
+
+`run-on-server` is one scope for every script, not one per script. The
+per-script decision is the `allowed-server-side-scripts` list in the active
+deployment's config, which only a `deploy` key can change; a scope per script
+would have to be minted again every time that list changed. Note what that
+means for `deploy`: a deploy key can already run arbitrary code through
+`after-deploy`, so `run-on-server` adds nothing for a key that holds `deploy`.
+It is for keys that should run the declared scripts *without* being able to
+ship new ones. Instance administration keys should
 hold only `<admin-resource>:create-project`.
 
 Dashboard viewers are admin *users* rather than keys, and hold
