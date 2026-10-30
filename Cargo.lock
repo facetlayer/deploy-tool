@@ -345,7 +345,7 @@ dependencies = [
 
 [[package]]
 name = "deploy-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "base64",
@@ -364,7 +364,7 @@ dependencies = [
 
 [[package]]
 name = "deploy-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "globset",
@@ -377,7 +377,7 @@ dependencies = [
 
 [[package]]
 name = "deploy-server"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "axum",
