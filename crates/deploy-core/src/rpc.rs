@@ -177,6 +177,18 @@ pub struct ActivateDeploymentParams {
     pub deploy_name: String,
 }
 
+/// Answer to `activateDeployment` and `rollback`. The deployment is active
+/// either way; `hook_errors` says which after-deploy hooks failed. Additive: an
+/// old server answers `null`, and an old client ignores the result. Before it
+/// existed a failed hook was only printed on the server, so a hotlaps deploy
+/// whose restart script exited 1 still ended "Deployment is active" with exit 0.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivateDeploymentResult {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hook_errors: Vec<String>,
+}
+
 // ---------------------------------------------------------------------------
 // Preview
 // ---------------------------------------------------------------------------
@@ -1003,6 +1015,26 @@ mod tests {
                 "the action must be the last segment: {scope:?}"
             );
         }
+    }
+
+    #[test]
+    fn activate_deployment_result_is_camel_case_and_omits_an_empty_list() {
+        let ok = serde_json::to_value(ActivateDeploymentResult::default()).unwrap();
+        assert_eq!(ok, serde_json::json!({}));
+
+        let failed = ActivateDeploymentResult {
+            hook_errors: vec!["after-deploy command failed".to_string()],
+        };
+        let json = serde_json::to_value(&failed).unwrap();
+        assert_eq!(json["hookErrors"][0], "after-deploy command failed");
+
+        // An old server's `null` and a new server's `{}` both mean no errors.
+        let from_old: Option<ActivateDeploymentResult> =
+            serde_json::from_value(Json::Null).unwrap();
+        assert_eq!(from_old, None);
+        let from_new: ActivateDeploymentResult =
+            serde_json::from_value(serde_json::json!({})).unwrap();
+        assert!(from_new.hook_errors.is_empty());
     }
 
     #[test]

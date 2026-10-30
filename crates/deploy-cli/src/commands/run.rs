@@ -137,7 +137,7 @@ pub fn run(config_file: &Path, override_dest: Option<&str>) -> Result<()> {
 
     println!("Deployment is verified ({}s)", timer.check_elapsed_secs());
 
-    setup
+    let activation = setup
         .client
         .activate_deployment(&ActivateDeploymentParams {
             deploy_name: deploy_name.clone(),
@@ -145,7 +145,26 @@ pub fn run(config_file: &Path, override_dest: Option<&str>) -> Result<()> {
 
     println!("Deployment is active ({}s)", timer.check_elapsed_secs());
 
-    Ok(())
+    fail_on_hook_errors(&activation)
+}
+
+/// The deployment is already active when hooks run, so a failed hook can't undo
+/// it, but it must not pass for a clean deploy: the hook is usually the service
+/// restart, and an unrestarted service looks healthy until it next restarts.
+pub fn fail_on_hook_errors(activation: &ActivateDeploymentResult) -> Result<()> {
+    if activation.hook_errors.is_empty() {
+        return Ok(());
+    }
+
+    bail!(
+        "The deployment is active, but after-deploy hooks failed on the server:\n{}",
+        activation
+            .hook_errors
+            .iter()
+            .map(|error| format!("  - {error}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    )
 }
 
 /// Sends a large manifest in batches, so no single JSON request gets oversized.

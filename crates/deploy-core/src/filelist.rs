@@ -57,6 +57,22 @@ impl FileMatchRule {
         }
     }
 
+    /// Whether `rel_path` is the pattern's literal leading path or one of its
+    /// directories: `a` and `a/b` for `a/b/*.js`, all of `a`, `a/b`, `a/b/c`
+    /// for `a/b/c`. The walk refuses to treat such a path as a file when it is
+    /// a symlinked directory, because the rule names something through it.
+    fn literal_prefix_passes_through(&self, rel_path: &str) -> bool {
+        let literal: Vec<&str> = self
+            .segments
+            .iter()
+            .map(|(text, _)| text.as_str())
+            .take_while(|text| !text.contains(GLOB_CHARS))
+            .collect();
+        let parts: Vec<&str> = rel_path.split('/').collect();
+
+        parts.len() <= literal.len() && literal[..parts.len()] == parts[..]
+    }
+
     /// Whether a directory could contain files matching this rule's pattern,
     /// walking path segments and pattern segments together.
     fn could_contain_match(&self, dir_rel_path: &str) -> bool {
@@ -246,6 +262,21 @@ fn lexically_normalize(path: &Path) -> PathBuf {
     out
 }
 
+/// Characters that make a pattern segment a glob rather than a literal name.
+const GLOB_CHARS: &[char] = &['*', '?', '[', ']', '{', '}', '(', ')', '!', '+', '@'];
+
+/// A symlink whose target is a directory. The walk never follows one; see
+/// `is_directory`.
+fn is_symlinked_directory(path: &Path) -> bool {
+    let is_link = fs::symlink_metadata(path)
+        .map(|meta| meta.file_type().is_symlink())
+        .unwrap_or(false);
+    is_link
+        && fs::metadata(path)
+            .map(|meta| meta.is_dir())
+            .unwrap_or(false)
+}
+
 /// Matches the JS use of `lstat`: a symlink to a directory counts as a file and
 /// is not descended into.
 fn is_directory(path: &Path) -> bool {
@@ -296,6 +327,43 @@ impl<'a> Resolver<'a> {
         default_value
     }
 
+    /// Fails when `include` names a path through a symlinked directory the walk
+    /// won't follow. Skipping it silently drops every file the rule names, and
+    /// on an `update-in-place` deploy the server then deletes those files as
+    /// leftovers: a hotlaps worktree with `backend/target` symlinked to the main
+    /// checkout's build deleted the API binary from both servers that way. Broad
+    /// globs (`src/**/*.js`) still pass over symlinks as before; only a rule
+    /// whose literal path goes through the link is an error.
+    fn check_symlinked_directory(&self, rel_path: &str, local_path: &Path) -> Result<()> {
+        if !is_symlinked_directory(local_path) {
+            return Ok(());
+        }
+
+        let excluded = self.rules.iter().any(|rule| {
+            matches!(rule.rule_type, RuleType::Exclude | RuleType::Ignore)
+                && rule.is_match(rel_path)
+        });
+        if excluded {
+            return Ok(());
+        }
+
+        let named_by = self.rules.iter().find(|rule| {
+            rule.rule_type == RuleType::Include && rule.literal_prefix_passes_through(rel_path)
+        });
+
+        match named_by {
+            Some(rule) => Err(anyhow!(
+                "`include {}` goes through {}, which is a symlink to a directory. \
+                 Deploys don't follow symlinks, so nothing under it would ship, and \
+                 update-in-place would delete those files from the server. Replace \
+                 the symlink with a real directory.",
+                rule.pattern,
+                rel_path
+            )),
+            None => Ok(()),
+        }
+    }
+
     /// Whether this directory is an ancestor of any include pattern, so we know
     /// to traverse into it even though it isn't itself included.
     fn is_ancestor_of_include(&self, rel_path: &str) -> bool {
@@ -316,6 +384,8 @@ impl<'a> Resolver<'a> {
     ) -> Result<()> {
         for local_sub_file in read_dir_sorted(local_dir)? {
             let rel_path = self.rel_path(&local_sub_file);
+
+            self.check_symlinked_directory(&rel_path, &local_sub_file)?;
 
             if is_directory(&local_sub_file) {
                 if self.should_include(&rel_path, assume_include_contents) {
@@ -740,6 +810,58 @@ mod tests {
         assert_eq!(
             resolved(&dir, "include dir-2\nignore dir-2/file-5\n"),
             vec!["dir-2/file-4", "dir-2/subdir-1/file-6"]
+        );
+    }
+
+    #[cfg(unix)]
+    fn symlinked_build_dir(name: &str) -> PathBuf {
+        let dir = temp_dir(name);
+        let real = temp_dir(&format!("{name}-real"));
+        write_files(&real, &["release/app"]);
+        write_files(&dir, &["src/main.rs", "vendor/real/lib.js"]);
+        std::os::unix::fs::symlink(&real, dir.join("target")).unwrap();
+        std::os::unix::fs::symlink(dir.join("vendor/real"), dir.join("vendor/linked")).unwrap();
+        dir
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_include_through_a_symlinked_directory_is_an_error() {
+        let dir = symlinked_build_dir("symlink-through");
+        let err = resolve_file_list_from_config(&dir, "include target/release/app\n")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("target"), "{err}");
+        assert!(err.contains("symlink"), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_include_naming_a_symlinked_directory_is_an_error() {
+        let dir = symlinked_build_dir("symlink-named");
+        assert!(resolve_file_list_from_config(&dir, "include target\n").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_glob_still_passes_over_a_symlinked_directory() {
+        let dir = symlinked_build_dir("symlink-glob");
+        assert_eq!(
+            resolved(&dir, "include vendor/**/*.js\ninclude src\n"),
+            vec!["src/main.rs", "vendor/real/lib.js"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_excluded_symlinked_directory_is_not_an_error() {
+        let dir = symlinked_build_dir("symlink-excluded");
+        assert_eq!(
+            resolved(
+                &dir,
+                "include src\ninclude target/release/app\nexclude target\n"
+            ),
+            vec!["src/main.rs"]
         );
     }
 

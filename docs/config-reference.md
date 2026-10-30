@@ -71,9 +71,12 @@ after-deploy
 ```
 
 `before-deploy` shell commands run on the client in the local root before the
-manifest is built. `after-deploy` actions run on the server in the activated
-deployment directory. Actions run in declaration order and a failure stops the
-operation.
+manifest is built, in declaration order, and a failure stops the deploy.
+`after-deploy` actions run on the server in the activated deployment directory,
+in declaration order, after the deployment is already active. A failed action
+does not stop the ones after it and cannot undo the activation, but the server
+reports it and `deploy run` (or `deploy rollback`) prints each failure and exits
+non-zero. Their output goes to the server's log, not the client.
 
 ## File rules
 
@@ -94,7 +97,12 @@ ignore-destination logs
 
 Patterns use `/`-separated, picomatch-compatible globs. `*` stays within a
 path segment; `**` crosses directories. Directory traversal is sorted and
-symlinked directories are treated as files rather than followed.
+symlinked directories are treated as files rather than followed. An `include`
+whose literal path goes through, or names, a symlinked directory is an error
+(`include build/app` with `build` a symlink), because nothing under the link
+would ship and `update-in-place` would delete those files from the server. A
+glob that merely could reach into one (`include src/**/*.js`) still passes it
+over.
 
 `update-in-place` deletes every destination path not present in the manifest
 or protected by a destination rule. Add protection for databases, uploads,

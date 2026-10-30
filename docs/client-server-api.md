@@ -47,8 +47,8 @@ most 256 entries and 64 KiB in total.
 | `finishMultiPartUpload` | `{ deployName, relPath }` | `null` | `deploy` |
 | `finishUploads` | `{ deployName }` | `null` | `deploy` |
 | `verifyDeployment` | `{ deployName }` | `{ status: "success" | "error", error? }` | `deploy` |
-| `activateDeployment` | `{ deployName }` | `null` | `deploy` |
-| `rollback` | `{ projectName, deployName }` | `null` | `rollback` |
+| `activateDeployment` | `{ deployName }` | `{ hookErrors? }` | `deploy` |
+| `rollback` | `{ projectName, deployName }` | `{ hookErrors? }` | `rollback` |
 | `previewDeployment` | `{ projectName, sourceFileManifest, sourceFileConfig }` | `Preview` | `read` |
 | `previewByDeployName` | `{ deployName }` | `Preview` | `read` |
 | `listDeployments` | `{ projectName, limit? }` | Deployment list and active name | `read` |
@@ -64,7 +64,11 @@ method the `deploy` CLI never calls — projects are registered with
 `auth-setup`. `getNeededFiles` returns a bare array. `FileEntry.executable` is optional;
 `verifyDeployment` sets or clears the execute bit of each entry that carries
 it and leaves the rest alone. `verifyDeployment` reports hash
-failure in its result rather than as a JSON-RPC error.
+failure in its result rather than as a JSON-RPC error. `activateDeployment` and
+`rollback` likewise report failed `after-deploy` hooks in-band: the deployment is
+active either way, and `hookErrors` (omitted when empty) lists one message per
+failed hook. The previous server answers both with `null`, which the CLI reads as
+no errors reported.
 
 All client-supplied relative paths are checked to remain inside their
 deployment directory.

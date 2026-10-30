@@ -10,7 +10,7 @@ use rusqlite::OptionalExtension;
 use serde_json::Value as Json;
 
 use deploy_core::config::{parse_activation_config, AfterDeployAction};
-use deploy_core::rpc::ActivateDeploymentParams;
+use deploy_core::rpc::{ActivateDeploymentParams, ActivateDeploymentResult};
 
 use crate::db;
 use crate::handlers::parse_params;
@@ -104,9 +104,10 @@ fn execute_shell_command(command: &str, working_dir: &Path, hook_type: &str) -> 
     let status = child.wait()?;
     if !status.success() {
         return Err(anyhow!(
-            "{} command failed with exit code: {}",
+            "{} command failed with exit code {}: {}",
             hook_type,
-            status.code().unwrap_or(-1)
+            status.code().unwrap_or(-1),
+            command
         ));
     }
 
@@ -280,6 +281,10 @@ pub fn activate_deployment(state: &AppState, params: &Json) -> Result<Json> {
     }
 
     // The old TS handler returned a Stream, which serialized to an object the
-    // client ignored. Null keeps the JSON-RPC contract (a defined result) intact.
-    Ok(Json::Null)
+    // client ignored, so an old client ignores this object too. The hook errors
+    // go back to the caller because the server's stdout is a journal nobody
+    // reads during a deploy.
+    Ok(serde_json::to_value(ActivateDeploymentResult {
+        hook_errors,
+    })?)
 }

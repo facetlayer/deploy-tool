@@ -7,6 +7,7 @@ use anyhow::{bail, Result};
 use deploy_core::rpc::*;
 
 use crate::client_setup::setup_client;
+use crate::commands::run::fail_on_hook_errors;
 
 pub fn rollback(
     config_file: &Path,
@@ -64,13 +65,13 @@ pub fn rollback(
         setup.project_name
     );
 
-    setup.client.rollback(&RollbackParams {
+    let activation = setup.client.rollback(&RollbackParams {
         project_name: setup.project_name.clone(),
         deploy_name: target.clone(),
     })?;
 
     println!("Rollback complete. Active deployment is now: {target}");
-    Ok(())
+    fail_on_hook_errors(&activation)
 }
 
 /// Prints the recent deployments and reads a selection from stdin. `None` means

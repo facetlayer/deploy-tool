@@ -98,7 +98,7 @@ plain `insert into … select`.
 
 ## Tests
 
-326 tests as of 2026-10-21: 111 in `deploy-core`, 99 + 23 + 12 + 10 in
+332 tests as of 2026-10-29: 116 in `deploy-core`, 99 + 23 + 13 + 10 in
 `deploy-server` (unit, `tests/authorization.rs`, `tests/deployment_flow.rs`,
 `tests/dashboard.rs`), 58 + 13 in `deploy-cli` (unit,
 `tests/cli_end_to_end.rs`).

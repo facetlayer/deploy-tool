@@ -208,6 +208,42 @@ fn update_in_place_deploys_share_one_directory() {
     assert!(!server.deploys_dir.join(&second).exists());
 }
 
+/// A failed hook used to be printed only in the server's journal, so the client
+/// reported a clean deploy while the service was never restarted.
+#[test]
+fn a_failed_after_deploy_hook_is_reported_to_the_caller() {
+    let root = TempRoot::new("hook-errors");
+    let (_stub, server) = start(&root);
+    let rpc = server.client(KEY);
+    create_project(&rpc, "hook-app", "hook-staging");
+
+    let files = [file("app.js", "v1\n")];
+    let clean = config_for("hook-app", true, "after-deploy\n  shell(true)\n");
+    let deploy_name = create_deployment(&rpc, "hook-app", &clean, &files);
+    upload_needed(&rpc, &deploy_name, &files);
+    rpc.ok("finishUploads", json!({ "deployName": deploy_name }));
+    rpc.ok("verifyDeployment", json!({ "deployName": deploy_name }));
+    let activated = rpc.ok("activateDeployment", json!({ "deployName": deploy_name }));
+    assert_eq!(activated, json!({}));
+
+    let failing = config_for("hook-app", true, "after-deploy\n  shell(exit 3)\n");
+    let deploy_name = create_deployment(&rpc, "hook-app", &failing, &files);
+    upload_needed(&rpc, &deploy_name, &files);
+    rpc.ok("finishUploads", json!({ "deployName": deploy_name }));
+    rpc.ok("verifyDeployment", json!({ "deployName": deploy_name }));
+    let activated = rpc.ok("activateDeployment", json!({ "deployName": deploy_name }));
+
+    let errors = activated["hookErrors"].as_array().expect("hookErrors");
+    assert_eq!(errors.len(), 1);
+    let error = errors[0].as_str().unwrap();
+    assert!(error.contains("exit code 3"), "{error}");
+    assert!(error.contains("exit 3"), "names the command: {error}");
+
+    // Still active: the hook runs after the pointer moves.
+    let listed = rpc.ok("listDeployments", json!({ "projectName": "hook-app" }));
+    assert_eq!(listed["activeDeployName"], deploy_name);
+}
+
 #[test]
 fn versioned_deploys_get_their_own_directory_and_rollback_repoints() {
     let root = TempRoot::new("versioned");

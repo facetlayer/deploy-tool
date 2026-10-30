@@ -186,8 +186,22 @@ impl RpcClient {
         self.call(methods::VERIFY_DEPLOYMENT, params)
     }
 
-    pub fn activate_deployment(&self, params: &ActivateDeploymentParams) -> Result<()> {
-        self.notify(methods::ACTIVATE_DEPLOYMENT, params)
+    pub fn activate_deployment(
+        &self,
+        params: &ActivateDeploymentParams,
+    ) -> Result<ActivateDeploymentResult> {
+        self.call_activation(methods::ACTIVATE_DEPLOYMENT, params)
+    }
+
+    /// An old server answers activation with `null`, which says nothing about
+    /// its hooks; read that as no errors reported.
+    fn call_activation<P: Serialize>(
+        &self,
+        method: &str,
+        params: &P,
+    ) -> Result<ActivateDeploymentResult> {
+        let result: Option<ActivateDeploymentResult> = self.call(method, params)?;
+        Ok(result.unwrap_or_default())
     }
 
     pub fn preview_deployment(
@@ -227,8 +241,8 @@ impl RpcClient {
         self.call(methods::LIST_DEPLOYMENTS, params)
     }
 
-    pub fn rollback(&self, params: &RollbackParams) -> Result<()> {
-        self.notify(methods::ROLLBACK, params)
+    pub fn rollback(&self, params: &RollbackParams) -> Result<ActivateDeploymentResult> {
+        self.call_activation(methods::ROLLBACK, params)
     }
 
     pub fn get_deployment_tags(
